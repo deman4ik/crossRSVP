@@ -12,6 +12,7 @@
 
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
+#include "activities/reader/ReaderLaunchMode.h"
 #include "util/ScreenshotInfo.h"
 
 class Activity;    // forward declaration
@@ -87,7 +88,8 @@ class ActivityManager {
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
   void goToBrowser();
-  void goToReader(std::string path, bool allowFastInitialRefresh = false);
+  void goToReader(std::string path, bool allowFastInitialRefresh = false,
+                  ReaderLaunchMode launchMode = ReaderLaunchMode::Paged);
   void goToSleep(bool fromTimeout = false);
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);

@@ -734,10 +734,10 @@ class ParagraphStreamer final : public Print {
         globalInEntity = true;
         entityBuffer[0] = '&';
         entityLen = 1;
-      } else if (c == '\n' && afterCR) {
+      } else if (VisibleTextUtils::isNormalizedCrLfContinuation(c, afterCR)) {
         // Second half of a CRLF: the newline was already counted on the preceding CR.
       } else {
-        const bool startsCodepoint = (c & 0xC0) != 0x80;
+        const bool startsCodepoint = !VisibleTextUtils::isUtf8Continuation(c);
         if (startsCodepoint) onVisibleCodepoint();
         prevCR = (c == '\r');  // a lone/leading CR is the newline; swallow any '\n' that follows
       }
