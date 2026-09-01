@@ -7,10 +7,13 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <charconv>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <string_view>
+#include <type_traits>
 
 namespace {
 
@@ -98,8 +101,32 @@ bool tryParseNumber(std::string_view s, T& out) {
   const char* begin = s.data();
   const char* end = s.data() + s.size();
   if (begin < end && *begin == '+') ++begin;
-  const auto r = std::from_chars(begin, end, out);
-  return r.ec == std::errc{} && r.ptr == end;
+#if defined(__APPLE__)
+  if constexpr (std::is_floating_point_v<T>) {
+    // Apple libc++ does not provide floating-point from_chars yet. Keep the
+    // fallback bounded and null-terminate before crossing the C API boundary.
+    constexpr size_t MAX_NUMBER_LENGTH = 63;
+    const size_t length = static_cast<size_t>(end - begin);
+    if (length == 0 || length > MAX_NUMBER_LENGTH) return false;
+
+    char buffer[MAX_NUMBER_LENGTH + 1];
+    memcpy(buffer, begin, length);
+    buffer[length] = '\0';
+
+    char* parseEnd = nullptr;
+    errno = 0;
+    const float value = std::strtof(buffer, &parseEnd);
+    if (errno == ERANGE || parseEnd != buffer + length) return false;
+
+    out = static_cast<T>(value);
+    return true;
+  } else {
+#endif
+    const auto r = std::from_chars(begin, end, out);
+    return r.ec == std::errc{} && r.ptr == end;
+#if defined(__APPLE__)
+  }
+#endif
 }
 
 // Collect up to 4 whitespace-separated tokens for a CSS edge-value shorthand

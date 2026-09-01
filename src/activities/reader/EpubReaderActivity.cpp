@@ -821,6 +821,10 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
                              });
       break;
     }
+    case EpubReaderMenuActivity::MenuAction::RSVP_MODE: {
+      activityManager.goToReader(bookPath, false, ReaderLaunchMode::Rsvp);
+      return;
+    }
     case EpubReaderMenuActivity::MenuAction::NIGHT_MODE:
       // Handled in-place by EpubReaderMenuActivity so its On/Off value updates
       // without closing the menu.

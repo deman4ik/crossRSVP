@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "EndOfBookOptions.h"
+#include "ReaderLaunchMode.h"
 #include "activities/Activity.h"
 
 class ReaderActivity : public Activity {
@@ -47,7 +48,8 @@ class ReaderActivity : public Activity {
   ~ReaderActivity() override = default;
 
   static std::unique_ptr<ReaderActivity> create(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                                std::string path, bool allowFastInitialRefresh);
+                                                std::string path, bool allowFastInitialRefresh,
+                                                ReaderLaunchMode launchMode = ReaderLaunchMode::Paged);
 
   void onEnter() override;
   void onExit() override;
