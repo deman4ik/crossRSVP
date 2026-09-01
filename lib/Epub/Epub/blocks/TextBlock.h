@@ -2,7 +2,9 @@
 #include <EpdFontFamily.h>
 #include <HalStorage.h>
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,11 +20,12 @@
 // vector-of-string layout cost ~250 throwing allocations per page load, which
 // was the primary driver of heap fragmentation on the ESP32-C3.
 //
-// Arena layout, in order (2-byte alignment holds by construction: all 16-bit
-// arrays come first and the arena base is allocator-aligned; RISC-V faults on
-// unaligned multi-byte access):
+// Arena layout, in order (the arena base is allocator-aligned and every typed
+// array starts at a naturally aligned offset; RISC-V faults on unaligned
+// multi-byte access):
 //   uint16_t textOff[wordCount]        byte offset of word i's text in text[]
 //   int16_t  xpos[wordCount]
+//   uint32_t visibleTextOffset[wordCount]
 //   uint16_t focusSuffixX[wordCount]   present only when focusPresent
 //   uint8_t  styles[wordCount]
 //   uint8_t  focusBoundary[wordCount]  present only when focusPresent
@@ -56,10 +59,11 @@ class TextBlock final : public Block {
   // The ONLY allocation: makeUniqueNoThrow, so OOM yields an invalid block
   // instead of abort() (bare new is not nothrow with -fno-exceptions).
   std::unique_ptr<uint8_t[]> arena;
-  // Typed views into the arena, bound once after the arena is filled. All
-  // 16-bit bases sit at even offsets, so direct dereference is alignment-safe.
+  // Typed views into the arena, bound once after the arena is filled. Every
+  // base sits at a naturally aligned offset, so direct dereference is safe.
   const uint16_t* textOffArr = nullptr;
   const int16_t* xposArr = nullptr;
+  const uint32_t* visibleTextOffsetArr = nullptr;
   const uint16_t* focusSuffixXArr = nullptr;  // null when !focusPresent
   const uint8_t* stylesArr = nullptr;
   const uint8_t* focusBoundaryArr = nullptr;  // null when !focusPresent
@@ -78,7 +82,8 @@ class TextBlock final : public Block {
   // vectors die with the caller. On arena OOM the block is empty and valid()
   // is false -- callers must check and fail the line instead of using it.
   explicit TextBlock(const std::vector<std::string>& words, const std::vector<int16_t>& wordXpos,
-                     const std::vector<EpdFontFamily::Style>& wordStyles, const std::vector<uint8_t>& focusBoundary,
+                     const std::vector<EpdFontFamily::Style>& wordStyles,
+                     const std::vector<uint32_t>& visibleTextOffsets, const std::vector<uint8_t>& focusBoundary,
                      const std::vector<uint16_t>& focusSuffixX, const BlockStyle& blockStyle = BlockStyle(),
                      std::vector<std::string> rubyTexts = {}, std::vector<LinkSpan> linkSpans = {});
   ~TextBlock() override = default;
@@ -97,6 +102,8 @@ class TextBlock final : public Block {
     return end - textOffArr[i] - 1;  // exclude the NUL
   }
   int16_t wordXpos(const uint16_t i) const { return xposArr[i]; }
+  uint32_t wordVisibleTextOffset(const uint16_t i) const { return visibleTextOffsetArr[i]; }
+  std::optional<uint16_t> findWordForVisibleTextOffset(uint32_t offset) const;
   EpdFontFamily::Style wordStyle(const uint16_t i) const { return static_cast<EpdFontFamily::Style>(stylesArr[i]); }
   uint8_t focusBoundary(const uint16_t i) const { return focusPresent ? focusBoundaryArr[i] : 0; }
   uint16_t focusSuffixX(const uint16_t i) const { return focusPresent ? focusSuffixXArr[i] : 0; }

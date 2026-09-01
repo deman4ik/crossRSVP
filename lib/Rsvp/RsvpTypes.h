@@ -109,6 +109,7 @@ struct Decision {
   bool pagedModeAvailable = false;
   bool cleanupRefresh = false;
   bool presentationAccepted = false;
+  bool checkpointRequested = false;
   uint32_t presentedAtMs = 0;
   uint32_t refreshDurationMs = 0;
   uint32_t nextDeadlineMs = 0;

@@ -72,7 +72,8 @@ bool EpubVisibleTextSource::open(const ResumeAnchor* anchor) {
 
   int initialSpine = 0;
   minimumVisibleOffset = 0;
-  if (anchor && anchor->valid && anchor->spineIndex < static_cast<uint16_t>(totalSpines)) {
+  if (anchor && anchor->valid && anchor->spineIndex >= static_cast<uint16_t>(totalSpines)) return false;
+  if (anchor && anchor->valid) {
     initialSpine = anchor->spineIndex;
     minimumVisibleOffset = anchor->visibleTextOffset;
   }

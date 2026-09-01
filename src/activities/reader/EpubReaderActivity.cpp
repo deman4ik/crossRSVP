@@ -10,6 +10,8 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <RsvpModeSwitch.h>
+#include <Utf8.h>
 #include <esp_system.h>
 
 #include <algorithm>
@@ -201,11 +203,13 @@ bool EpubReaderActivity::loadBook() {
 
   epub->setupCacheDir();
 
+  bool loadedProgress = false;
   HalFile f;
   if (Storage.openFileForRead("ERS", epub->getCachePath() + "/progress.bin", f)) {
     uint8_t data[10];
     int dataSize = f.read(data, sizeof(data));
     if (dataSize == 4 || dataSize == 6 || dataSize == 10) {
+      loadedProgress = true;
       currentSpineIndex = data[0] + (data[1] << 8);
       nextPageNumber = data[2] + (data[3] << 8);
       if (nextPageNumber == UINT16_MAX) {
@@ -224,13 +228,23 @@ bool EpubReaderActivity::loadBook() {
     }
   }
 
-  if (currentSpineIndex == 0) {
+  if (!loadedProgress && currentSpineIndex == 0) {
     int textSpineIndex = epub->getSpineIndexForTextReference();
     if (textSpineIndex != 0) {
       currentSpineIndex = textSpineIndex;
       cachedVisibleTextOffset.reset();
       LOG_DBG("ERS", "Opened for first time, navigating to text reference at index %d", textSpineIndex);
     }
+  }
+
+  if (launchContext.anchor.valid) {
+    currentSpineIndex = launchContext.anchor.spineIndex;
+    nextPageNumber = 0;
+    cachedSpineIndex = currentSpineIndex;
+    cachedVisibleTextOffset.reset();
+    cachedChapterTotalPageCount = 0;
+    pendingOffsetJump = launchContext.anchor.visibleTextOffset;
+    highlightPending = launchContext.temporaryHighlight;
   }
 
   loadCachedBookmarks();
@@ -326,6 +340,11 @@ void EpubReaderActivity::loop() {
   if (appliedOrientation != SETTINGS.orientation) {
     applyOrientation(SETTINGS.orientation);
     requestUpdate();
+    return;
+  }
+
+  if (rsvpSwitchPending && section) {
+    switchToRsvp();
     return;
   }
 
@@ -491,7 +510,7 @@ void EpubReaderActivity::loop() {
         openDictionaryWordSelect();
         return;
       case CrossPointSettings::LP_MENU_RSVP_MODE:
-        activityManager.goToReader(bookPath, false, ReaderLaunchMode::Rsvp);
+        switchToRsvp();
         return;
       case CrossPointSettings::LP_MENU_READER_MENU:
       case CrossPointSettings::LP_MENU_DISABLED:
@@ -529,7 +548,7 @@ void EpubReaderActivity::loop() {
         }
         return;
       case CrossPointSettings::LP_MENU_RSVP_MODE:
-        activityManager.goToReader(bookPath, false, ReaderLaunchMode::Rsvp);
+        switchToRsvp();
         return;
       case CrossPointSettings::LP_MENU_DISABLED:
       default:
@@ -828,7 +847,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::RSVP_MODE: {
-      activityManager.goToReader(bookPath, false, ReaderLaunchMode::Rsvp);
+      switchToRsvp();
       return;
     }
     case EpubReaderMenuActivity::MenuAction::NIGHT_MODE:
@@ -1041,6 +1060,7 @@ bool EpubReaderActivity::pageTurn(bool isForwardTurn) {
     if (section->currentPage < section->pageCount - 1 || section->isBuilding()) {
       section->currentPage++;
       lastPageTurnTime = millis();
+      pageTurnedSinceRsvp = true;
       return true;
     } else if (currentSpineIndex + 1 < epub->getSpineItemsCount()) {
       RenderLock lock;
@@ -1048,16 +1068,19 @@ bool EpubReaderActivity::pageTurn(bool isForwardTurn) {
       currentSpineIndex++;
       section.reset();
       lastPageTurnTime = millis();
+      pageTurnedSinceRsvp = true;
       return true;
     } else {
       currentSpineIndex = epub->getSpineItemsCount();
       lastPageTurnTime = millis();
+      pageTurnedSinceRsvp = true;
       return true;
     }
   } else {
     if (section->currentPage > 0) {
       section->currentPage--;
       lastPageTurnTime = millis();
+      pageTurnedSinceRsvp = true;
       return true;
     } else if (currentSpineIndex > 0) {
       RenderLock lock;
@@ -1066,6 +1089,7 @@ bool EpubReaderActivity::pageTurn(bool isForwardTurn) {
       currentSpineIndex--;
       section.reset();
       lastPageTurnTime = millis();
+      pageTurnedSinceRsvp = true;
       return true;
     }
   }
@@ -1079,20 +1103,56 @@ bool EpubReaderActivity::skipPages(int amount) {
     nextPageNumber = 0;
     currentSpineIndex++;
     section.reset();
+    pageTurnedSinceRsvp = true;
     return true;
   } else {
     if (section->currentPage > 0) {
       section->currentPage = 0;
+      pageTurnedSinceRsvp = true;
       return true;
     } else if (currentSpineIndex > 0) {
       RenderLock lock;
       nextPageNumber = 0;
       currentSpineIndex--;
       section.reset();
+      pageTurnedSinceRsvp = true;
       return true;
     }
   }
   return false;
+}
+
+void EpubReaderActivity::switchToRsvp() {
+  rsvp::ResumeAnchor pageStartAnchor;
+  if (section && section->currentPage >= 0 && section->currentPage < section->pageCount) {
+    const auto offset = section->getVisibleTextOffsetForPage(static_cast<uint16_t>(section->currentPage));
+    if (offset.has_value()) {
+      pageStartAnchor = {.spineIndex = static_cast<uint16_t>(currentSpineIndex),
+                         .visibleTextOffset = *offset,
+                         .sameOffsetOrdinal = 0,
+                         .valid = true};
+    }
+  }
+  if (!pageStartAnchor.valid) {
+    // A chapter/link/percent jump may have discarded the old Section before
+    // the destination page is built. Never reuse the previous rendered page's
+    // offset; complete the requested switch from loop() once the live Section
+    // is available.
+    rsvpSwitchPending = true;
+    requestUpdate();
+    return;
+  }
+
+  bool stillOnLastRsvpPage = false;
+  if (!pageTurnedSinceRsvp && launchContext.anchor.valid &&
+      launchContext.anchor.spineIndex == static_cast<uint16_t>(currentSpineIndex)) {
+    const auto anchorPage = section->getPageForVisibleTextOffset(launchContext.anchor.visibleTextOffset);
+    stillOnLastRsvpPage = anchorPage.has_value() && *anchorPage == section->currentPage;
+  }
+  const auto decision = rsvp::RsvpModeSwitch::fromPaged(
+      {.currentAnchor = launchContext.anchor, .pageStartAnchor = pageStartAnchor, .pageTurned = !stillOnLastRsvpPage});
+  rsvpSwitchPending = false;
+  activityManager.goToReader(bookPath, false, ReaderLaunchContext{ReaderLaunchMode::Rsvp, decision.anchor});
 }
 
 bool EpubReaderActivity::isAtEndOfBook() const { return epub && currentSpineIndex >= epub->getSpineItemsCount(); }
@@ -1166,8 +1226,14 @@ void EpubReaderActivity::renderBook() {
 
     const bool cacheLoaded = section->loadSectionFile(renderSpec);
     if (cacheLoaded) {
-      cachedChapterTotalPageCount = 0;
-      cachedVisibleTextOffset.reset();
+      // Ordinary Paged progress already has a stable page number for this
+      // exact cache. RSVP progress deliberately stores pageCount=0 and relies
+      // on its visible offset, which must still be mapped through a complete
+      // cached section after sleep/reopen.
+      if (cachedChapterTotalPageCount != 0) {
+        cachedChapterTotalPageCount = 0;
+        cachedVisibleTextOffset.reset();
+      }
     }
     const bool cacheComplete = cacheLoaded && !section->isPartial();
     const bool explicitOffsetJump = pendingOffsetJump.has_value();
@@ -1395,6 +1461,7 @@ void EpubReaderActivity::renderBook() {
 
     const auto start = millis();
     renderContents(std::move(p), orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
+    highlightPending = false;
     LOG_DBG("ERS", "Rendered page in %dms", millis() - start);
     lastRenderCompleteMs = millis();
   }
@@ -1506,6 +1573,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
                                         const int orientedMarginLeft) {
   const auto t0 = millis();
   const int fontId = SETTINGS.getReaderFontId();
+  const bool oneShotHighlight = highlightPending && launchContext.anchor.valid &&
+                                launchContext.anchor.spineIndex == static_cast<uint16_t>(currentSpineIndex);
 
   struct PxcSlotGuard {
     ~PxcSlotGuard() { ImageBlock::releaseRenderCache(); }
@@ -1526,7 +1595,9 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const bool manualRefreshPending = forcedRefreshPending;
   forcedRefreshPending = false;
   const bool cleanImageBasePending = manualRefreshPending || pagesUntilFullRefresh <= 1;
-  const bool needsTextGrayscale = SETTINGS.textAntiAliasing;
+  // The one-shot inverted word must not be overpainted by the subsequent text
+  // anti-aliasing pass. The next ordinary page render restores normal AA.
+  const bool needsTextGrayscale = SETTINGS.textAntiAliasing && !oneShotHighlight;
   const bool needsAnyGrayscale = needsTextGrayscale || pageHasImages;
   const bool tiledGrayscale = needsAnyGrayscale && renderer.supportsStripGrayscale();
   // Paper Mono only (no other panel combines): defer the B/W base activation so
@@ -1552,6 +1623,12 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
 
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
   renderStatusBar();
+  if (oneShotHighlight && !drawTemporaryHighlight(*page, fontId, orientedMarginTop, orientedMarginLeft)) {
+    LOG_ERR("ERS", "Unable to locate RSVP highlight at spine=%u offset=%lu ordinal=%u",
+            static_cast<unsigned>(launchContext.anchor.spineIndex),
+            static_cast<unsigned long>(launchContext.anchor.visibleTextOffset),
+            static_cast<unsigned>(launchContext.anchor.sameOffsetOrdinal));
+  }
   const auto tBwRender = millis();
 
   if (pageHasImages) {
@@ -1714,6 +1791,60 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - t0);
     }
   }
+}
+
+bool EpubReaderActivity::drawTemporaryHighlight(const Page& page, const int fontId, const int marginTop,
+                                                const int marginLeft) const {
+  uint16_t matchingOrdinal = 0;
+  const auto matchesTokenIdentity = [this](const TextBlock& block, const uint16_t wordIndex) {
+    if (launchContext.tokenLength == 0) return true;
+    char normalized[rsvp::MAX_TOKEN_BYTES + 1] = {};
+    size_t normalizedLength = 0;
+    if (!utf8ComposeNfcToBuffer(block.wordText(wordIndex), block.wordTextLen(wordIndex), normalized, sizeof(normalized),
+                                normalizedLength, true) ||
+        normalizedLength != launchContext.tokenLength) {
+      return false;
+    }
+    uint32_t hash = 2166136261U;
+    for (uint16_t index = 0; index < launchContext.tokenLength; ++index) {
+      hash ^= static_cast<uint8_t>(normalized[index]);
+      hash *= 16777619U;
+    }
+    return hash == launchContext.tokenHash32;
+  };
+  const int ascender = renderer.getFontAscenderSize(fontId);
+  const int lineHeight = renderer.getLineHeight(fontId);
+  for (const auto& element : page.elements) {
+    if (element->getTag() != TAG_PageLine) continue;
+    const auto& line = static_cast<const PageLine&>(*element);
+    const auto& block = *line.getBlock();
+    for (uint16_t wordIndex = 0; wordIndex < block.wordCount(); ++wordIndex) {
+      if (block.wordVisibleTextOffset(wordIndex) != launchContext.anchor.visibleTextOffset) continue;
+      if (launchContext.tokenLength != 0) {
+        // The RSVP stream ordinal also counts structural events that do not
+        // become TextBlock words. Token identity is the stable bridge back to
+        // Paged layout; ordinal remains the legacy fallback when it is absent.
+        if (!matchesTokenIdentity(block, wordIndex)) continue;
+      } else if (matchingOrdinal++ != launchContext.anchor.sameOffsetOrdinal) {
+        continue;
+      }
+
+      const auto style = block.wordStyle(wordIndex);
+      const char* text = block.wordText(wordIndex);
+      const int x = marginLeft + line.xPos + block.wordXpos(wordIndex);
+      int y = marginTop + line.yPos + block.getRubyShift(ascender);
+      if ((style & EpdFontFamily::SUP) != 0) {
+        y -= ascender * 2 / 5;
+      } else if ((style & EpdFontFamily::SUB) != 0) {
+        y += ascender / 4;
+      }
+      const int width = renderer.getTextAdvanceX(fontId, text, style);
+      renderer.fillRect(x - 2, y - 2, width + 4, lineHeight + 4, true);
+      renderer.drawText(fontId, x, y, text, false, style);
+      return true;
+    }
+  }
+  return false;
 }
 
 void EpubReaderActivity::renderStatusBar() const {

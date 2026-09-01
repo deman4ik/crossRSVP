@@ -263,7 +263,7 @@ void ActivityManager::goToBrowser() {
 }
 
 void ActivityManager::goToReader(std::string path, const bool allowFastInitialRefresh,
-                                 const ReaderLaunchMode launchMode) {
+                                 const ReaderLaunchContext launchContext) {
   if (path.empty()) {
     goToFileBrowser("/");
     return;
@@ -279,7 +279,8 @@ void ActivityManager::goToReader(std::string path, const bool allowFastInitialRe
     return;
   }
 
-  auto activity = ReaderActivity::create(renderer, mappedInput, std::move(path), allowFastInitialRefresh, launchMode);
+  auto activity =
+      ReaderActivity::create(renderer, mappedInput, std::move(path), allowFastInitialRefresh, launchContext);
   if (activity) {
     replaceActivity(std::move(activity));
   }

@@ -10,6 +10,10 @@ class RsvpSession final {
   explicit RsvpSession(RsvpSource& source, ResumeAnchor initialAnchor = {}, RsvpPacingConfig pacing = {});
 
   Decision step(const Input& input);
+  ResumeAnchor currentAnchor() const { return currentEvent.anchor; }
+  uint32_t currentTokenHash() const;
+  uint16_t currentTokenLength() const { return preparedWord.textLength; }
+  uint64_t activeReadingMs() const { return accumulatedActiveMs; }
 
  private:
   static constexpr uint8_t HISTORY_CAPACITY = 6;
@@ -50,6 +54,12 @@ class RsvpSession final {
   uint16_t framePausePercent = 100;
   uint16_t paceWpm = 100;
   bool framePresented = false;
+  bool checkpointRequestedThisStep = false;
+  bool checkpointClockStarted = false;
+  bool clockInitialized = false;
+  uint32_t lastCheckpointRequestMs = 0;
+  uint32_t lastObservedNowMs = 0;
+  uint64_t accumulatedActiveMs = 0;
   uint16_t framesSinceCleanup = 0;
   HistoryEntry history[HISTORY_CAPACITY] = {};
   uint8_t historyCount = 0;
