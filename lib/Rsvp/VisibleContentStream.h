@@ -35,6 +35,9 @@ class VisibleContentStream final {
   bool closeTag();
   bool appendVisibleBytes(const char* bytes, size_t length);
   bool appendVisibleCodepoint(const char* bytes, size_t length);
+  bool splitCompletedEmDash();
+  bool beginDiscretionaryHyphenJoin(uint8_t whitespace);
+  void assignAnchor(DocumentEvent& event, uint32_t visibleOffset);
   bool flushWord();
   bool emitBoundary();
   bool emitNonText(NonTextKind kind);
@@ -47,6 +50,7 @@ class VisibleContentStream final {
   uint16_t wordLength = 0;
   char word[MAX_TOKEN_BYTES + 1] = {};
   bool wordOversized = false;
+  bool joiningDiscretionaryHyphen = false;
   bool insideTag = false;
   bool tagIsClose = false;
   bool tagNameDone = false;
@@ -64,6 +68,9 @@ class VisibleContentStream final {
   bool previousVisibleWasCr = false;
   bool emittedVisibleContent = false;
   bool lastEventWasBoundary = true;
+  uint32_t lastAnchorOffset = 0;
+  uint16_t nextSameOffsetOrdinal = 0;
+  bool anchorOffsetInitialized = false;
   bool stopped = false;
 };
 

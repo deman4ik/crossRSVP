@@ -213,7 +213,8 @@ TEST(RsvpSession, UnsupportedFirstElementRequestsPagedFallback) {
   const auto decision = session.step({});
 
   EXPECT_EQ(decision.state, rsvp::State::Boundary);
-  EXPECT_TRUE(decision.switchToPaged);
+  EXPECT_TRUE(decision.pagedModeAvailable);
+  EXPECT_FALSE(decision.switchToPaged);
   EXPECT_FALSE(decision.render);
 }
 
@@ -266,6 +267,23 @@ TEST(VisibleContentStream, MarksPunctuationOnlyRunsAsNonLexical) {
   EXPECT_EQ(events[1].kind, rsvp::EventKind::NonLexicalText);
   EXPECT_EQ(events[2].kind, rsvp::EventKind::Word);
   EXPECT_STREQ(events[2].text, "Первое");
+}
+
+TEST(VisibleContentStream, SplitsEmDashFromThePreviousWordAndKeepsItVisible) {
+  const auto events = parse("<body>слово—следующее</body>", 3);
+
+  ASSERT_EQ(events.size(), 3u);
+  EXPECT_STREQ(events[0].text, "слово");
+  EXPECT_STREQ(events[1].text, "—следующее");
+  EXPECT_EQ(events[1].anchor.visibleTextOffset, 5u);
+}
+
+TEST(VisibleContentStream, RejoinsDiscretionaryAndLayoutOnlyHyphenation) {
+  const auto events = parse("<body>пере&shy; нос обыч-\r\nный</body>", 3);
+
+  ASSERT_EQ(events.size(), 3u);
+  EXPECT_STREQ(events[0].text, "перенос");
+  EXPECT_STREQ(events[1].text, "обычный");
 }
 
 TEST(VisibleContentStream, IgnoresNonVisibleTextAndReportsDocumentElements) {
@@ -353,6 +371,19 @@ TEST(EpubVisibleTextSource, EmitsChapterBoundaryWithoutCollectingSpines) {
   ASSERT_TRUE(source.next(event));
   EXPECT_EQ(event.kind, rsvp::EventKind::Word);
   EXPECT_STREQ(event.text, "два");
+}
+
+TEST(EpubVisibleTextSource, ResumesAtTheExactSameOffsetOrdinal) {
+  StringEpubProvider provider({"<body><img src='cover'/>слово</body>"});
+  rsvp::EpubVisibleTextSource source(provider);
+  const rsvp::ResumeAnchor anchor{.spineIndex = 0, .visibleTextOffset = 0, .sameOffsetOrdinal = 1, .valid = true};
+  ASSERT_TRUE(source.open(&anchor));
+
+  rsvp::DocumentEvent event;
+  ASSERT_TRUE(source.next(event));
+  EXPECT_EQ(event.kind, rsvp::EventKind::Word);
+  EXPECT_STREQ(event.text, "слово");
+  EXPECT_EQ(event.anchor.sameOffsetOrdinal, 1u);
 }
 
 }  // namespace
