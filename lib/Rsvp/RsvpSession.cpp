@@ -48,6 +48,15 @@ RsvpSession::RsvpSession(RsvpSource& source, const ResumeAnchor initialAnchor, c
 
 uint32_t RsvpSession::baseIntervalMs() const { return 60000u / std::max<uint16_t>(1, paceWpm); }
 
+uint32_t RsvpSession::currentTokenHash() const {
+  uint32_t hash = 2166136261U;
+  for (uint16_t index = 0; index < preparedWord.textLength; ++index) {
+    hash ^= static_cast<uint8_t>(preparedWord.text[index]);
+    hash *= 16777619U;
+  }
+  return hash;
+}
+
 uint16_t RsvpSession::effectiveMaximumWpm() const { return std::min(pacing.maximumWpm, pacing.safeMaximumWpm); }
 
 PauseReason RsvpSession::pauseReasonFor(const NonTextKind kind) {
@@ -91,6 +100,11 @@ void RsvpSession::fillDecision(Decision& decision) const {
   if (state == State::Paused && chapterPending) decision.pauseReason = PauseReason::Chapter;
   decision.nextDeadlineMs = nextDeadlineMs;
   decision.paceWpm = paceWpm;
+  decision.checkpointRequested = decision.checkpointRequested || checkpointRequestedThisStep;
+  if (state == State::Error) {
+    decision.switchToPaged = true;
+    decision.pagedModeAvailable = true;
+  }
 }
 
 void RsvpSession::setError(Decision& decision, const Error error) {
@@ -100,6 +114,7 @@ void RsvpSession::setError(Decision& decision, const Error error) {
   nextDeadlineMs = 0;
   decision.error = error;
   decision.pagedModeAvailable = true;
+  checkpointRequestedThisStep = true;
   fillDecision(decision);
 }
 
@@ -144,16 +159,18 @@ bool RsvpSession::fetchLookahead() {
 
 bool RsvpSession::emitWord(const DocumentEvent& event, const uint32_t nowMs, Decision& decision,
                            const bool recordHistory) {
-  currentEvent = event;
-  if (!prepareRsvpWord(currentEvent.text, currentEvent.textLength, preparedWord)) {
-    state = preparedWord.overflowed ? State::Boundary : State::Error;
-    fallbackReason = preparedWord.overflowed ? PauseReason::OversizedWord : PauseReason::Error;
+  PreparedWord candidateWord;
+  if (!prepareRsvpWord(event.text, event.textLength, candidateWord)) {
+    state = candidateWord.overflowed ? State::Boundary : State::Error;
+    fallbackReason = candidateWord.overflowed ? PauseReason::OversizedWord : PauseReason::Error;
     decision = {};
-    decision.error = preparedWord.overflowed ? Error::None : Error::InvalidDocument;
+    decision.error = candidateWord.overflowed ? Error::None : Error::InvalidDocument;
     decision.pagedModeAvailable = true;
     fillDecision(decision);
     return false;
   }
+  currentEvent = event;
+  preparedWord = candidateWord;
   if (recordHistory) {
     if (historyCursor + 1 < historyCount) historyCount = static_cast<uint8_t>(historyCursor + 1);
     if (historyCount == HISTORY_CAPACITY) {
@@ -258,6 +275,18 @@ bool RsvpSession::emitHistoryWord(const uint8_t historyIndex, const uint32_t now
 }
 
 Decision RsvpSession::step(const Input& input) {
+  checkpointRequestedThisStep = false;
+  if (clockInitialized && state == State::Playing) {
+    accumulatedActiveMs += static_cast<uint32_t>(input.nowMs - lastObservedNowMs);
+  }
+  lastObservedNowMs = input.nowMs;
+  clockInitialized = true;
+  if (state == State::Playing && checkpointClockStarted &&
+      static_cast<uint32_t>(input.nowMs - lastCheckpointRequestMs) >= 30000u) {
+    checkpointRequestedThisStep = true;
+    lastCheckpointRequestMs = input.nowMs;
+  }
+
   Decision decision;
   fillDecision(decision);
 
@@ -271,6 +300,7 @@ Decision RsvpSession::step(const Input& input) {
   }
 
   if (input.action == Action::ModeSwitch || input.action == Action::Exit) {
+    checkpointRequestedThisStep = true;
     state = State::Exited;
     nextDeadlineMs = 0;
     decision = {};
@@ -311,6 +341,7 @@ Decision RsvpSession::step(const Input& input) {
       if (state == State::Playing) {
         state = State::Paused;
         nextDeadlineMs = 0;
+        checkpointRequestedThisStep = true;
       } else if (state == State::Paused) {
         if (chapterPauseShown) {
           chapterPauseShown = false;
@@ -320,6 +351,10 @@ Decision RsvpSession::step(const Input& input) {
         } else {
           state = State::Playing;
         }
+        if (!checkpointClockStarted) {
+          checkpointClockStarted = true;
+          lastCheckpointRequestMs = input.nowMs;
+        }
       }
       break;
     case Action::StepForward:
@@ -327,6 +362,7 @@ Decision RsvpSession::step(const Input& input) {
         if (chapterPauseShown) chapterPauseShown = false;
         chapterPending = false;
         emitNextWord(input.nowMs, decision);
+        checkpointRequestedThisStep = true;
       }
       break;
     case Action::RewindFive:
@@ -337,6 +373,7 @@ Decision RsvpSession::step(const Input& input) {
         chapterPending = false;
         chapterPauseShown = false;
         emitHistoryWord(target, input.nowMs, decision);
+        checkpointRequestedThisStep = true;
       }
       break;
     case Action::WordDoesNotFit:
@@ -352,6 +389,7 @@ Decision RsvpSession::step(const Input& input) {
       if (state == State::Playing && !framePresented && input.nowMs >= nextDeadlineMs) {
         if (chapterPending) {
           state = State::Paused;
+          checkpointRequestedThisStep = true;
           chapterPauseShown = true;
           nextDeadlineMs = 0;
           decision = {};

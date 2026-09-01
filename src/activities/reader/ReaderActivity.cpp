@@ -17,8 +17,9 @@
 #include "XtcReaderActivity.h"
 
 ReaderActivity::ReaderActivity(const char* name, GfxRenderer& renderer, MappedInputManager& mappedInput,
-                               std::string bookPath, const bool allowFastInitialRefresh)
-    : Activity(name, renderer, mappedInput), bookPath(std::move(bookPath)) {
+                               std::string bookPath, const bool allowFastInitialRefresh,
+                               ReaderLaunchContext launchContext)
+    : Activity(name, renderer, mappedInput), bookPath(std::move(bookPath)), launchContext(std::move(launchContext)) {
   if (allowFastInitialRefresh) {
     const int refreshFrequency = SETTINGS.getRefreshFrequency();
     pagesUntilFullRefresh = refreshFrequency > 1 ? refreshFrequency : 2;
@@ -27,17 +28,19 @@ ReaderActivity::ReaderActivity(const char* name, GfxRenderer& renderer, MappedIn
 
 std::unique_ptr<ReaderActivity> ReaderActivity::create(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                        std::string path, const bool allowFastInitialRefresh,
-                                                       const ReaderLaunchMode launchMode) {
+                                                       const ReaderLaunchContext launchContext) {
   // ActivityManager requires heap ownership; each branch allocates exactly one screen-lifetime object.
   std::unique_ptr<ReaderActivity> activity;
   if (FsHelpers::hasXtcExtension(path)) {
     activity = makeUniqueNoThrow<XtcReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh);
   } else if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
     activity = makeUniqueNoThrow<TxtReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh);
-  } else if (launchMode == ReaderLaunchMode::Rsvp) {
-    activity = makeUniqueNoThrow<RsvpReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh);
+  } else if (launchContext.mode == ReaderLaunchMode::Rsvp) {
+    activity = makeUniqueNoThrow<RsvpReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh,
+                                                     launchContext);
   } else {
-    activity = makeUniqueNoThrow<EpubReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh);
+    activity = makeUniqueNoThrow<EpubReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh,
+                                                     launchContext);
   }
 
   if (!activity) {

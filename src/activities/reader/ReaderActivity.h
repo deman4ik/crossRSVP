@@ -12,6 +12,7 @@
 class ReaderActivity : public Activity {
  protected:
   std::string bookPath;
+  ReaderLaunchContext launchContext;
   int pagesUntilFullRefresh = 0;
   bool forcedRefreshPending = false;
 
@@ -19,7 +20,7 @@ class ReaderActivity : public Activity {
   std::atomic<bool> endOfBookOptionsReady{false};
 
   explicit ReaderActivity(const char* name, GfxRenderer& renderer, MappedInputManager& mappedInput,
-                          std::string bookPath, bool allowFastInitialRefresh);
+                          std::string bookPath, bool allowFastInitialRefresh, ReaderLaunchContext launchContext = {});
 
   virtual bool loadBook() = 0;
   virtual std::string getBookTitle() const = 0;
@@ -49,7 +50,7 @@ class ReaderActivity : public Activity {
 
   static std::unique_ptr<ReaderActivity> create(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                 std::string path, bool allowFastInitialRefresh,
-                                                ReaderLaunchMode launchMode = ReaderLaunchMode::Paged);
+                                                ReaderLaunchContext launchContext = {});
 
   void onEnter() override;
   void onExit() override;

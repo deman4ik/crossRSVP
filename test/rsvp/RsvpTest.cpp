@@ -386,4 +386,12 @@ TEST(EpubVisibleTextSource, ResumesAtTheExactSameOffsetOrdinal) {
   EXPECT_EQ(event.anchor.sameOffsetOrdinal, 1u);
 }
 
+TEST(EpubVisibleTextSource, RejectsResumeAnchorOutsideTheCurrentBookRevision) {
+  StringEpubProvider provider({"<html><body><p>first</p></body></html>"});
+  rsvp::EpubVisibleTextSource source(provider);
+  const rsvp::ResumeAnchor invalid{.spineIndex = 9, .visibleTextOffset = 0, .valid = true};
+
+  EXPECT_FALSE(source.open(&invalid));
+}
+
 }  // namespace

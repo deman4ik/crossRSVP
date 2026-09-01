@@ -62,4 +62,5 @@ add_subdirectory(inflate_stream)
 add_subdirectory(fs_helpers)
 
 add_subdirectory(absolute_grayscale)
+add_subdirectory(text_block)
 add_subdirectory(rsvp)

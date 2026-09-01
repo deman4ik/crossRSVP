@@ -43,8 +43,8 @@ class ParsedText {
   std::vector<std::string> linkTargets;
   // Zero-based visible Unicode-codepoint offsets in the spine body, stored as
   // uint16_t deltas from a shared base to keep this layout-only metadata small.
-  // Pathological spans wider than uint16_t use sparse rebases; rendered
-  // TextBlocks do not carry any of this metadata.
+  // Pathological spans wider than uint16_t use sparse rebases; extractLine
+  // expands the offsets into each rendered TextBlock's compact arena.
   struct VisibleOffsetRebase {
     size_t wordIndex;
     uint32_t base;
@@ -65,6 +65,7 @@ class ParsedText {
   std::vector<bool> reorderedContinuesScratch;
   std::vector<bool> reorderedNoSpaceBeforeScratch;
   std::vector<uint8_t> reorderedFocusBoundaryScratch;
+  std::vector<uint32_t> reorderedVisibleOffsetsScratch;
   std::vector<uint16_t> visualOrderScratch;
 
   uint32_t visibleOffsetBaseAt(size_t wordIndex) const;

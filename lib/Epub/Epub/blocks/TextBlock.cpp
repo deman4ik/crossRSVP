@@ -11,8 +11,9 @@
 #include "../../../../src/fontIds.h"
 
 size_t TextBlock::arenaSize(const uint16_t wordCount, const bool hasFocus, const uint16_t textBytes) {
-  // Layout documented in TextBlock.h: 16-bit arrays first, then 8-bit arrays, then text.
-  size_t size = static_cast<size_t>(wordCount) * (sizeof(uint16_t) + sizeof(int16_t) + sizeof(uint8_t));
+  // Layout documented in TextBlock.h: fixed-width arrays first, then 8-bit arrays, then text.
+  size_t size =
+      static_cast<size_t>(wordCount) * (sizeof(uint16_t) + sizeof(int16_t) + sizeof(uint32_t) + sizeof(uint8_t));
   if (hasFocus) {
     size += static_cast<size_t>(wordCount) * (sizeof(uint16_t) + sizeof(uint8_t));
   }
@@ -24,7 +25,8 @@ void TextBlock::bindArenaPointers() {
   const size_t wc = numWords;
   textOffArr = reinterpret_cast<const uint16_t*>(base);
   xposArr = reinterpret_cast<const int16_t*>(base + wc * 2);
-  size_t off = wc * 4;
+  visibleTextOffsetArr = reinterpret_cast<const uint32_t*>(base + wc * 4);
+  size_t off = wc * 8;
   if (focusPresent) {
     focusSuffixXArr = reinterpret_cast<const uint16_t*>(base + off);
     off += wc * 2;
@@ -39,7 +41,8 @@ void TextBlock::bindArenaPointers() {
 }
 
 TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<int16_t>& wordXpos,
-                     const std::vector<EpdFontFamily::Style>& wordStyles, const std::vector<uint8_t>& focusBoundary,
+                     const std::vector<EpdFontFamily::Style>& wordStyles,
+                     const std::vector<uint32_t>& visibleTextOffsets, const std::vector<uint8_t>& focusBoundary,
                      const std::vector<uint16_t>& focusSuffixX, const BlockStyle& blockStyle,
                      std::vector<std::string> rubyTexts, std::vector<LinkSpan> linkSpans)
     : blockStyle(blockStyle), rubyTexts(std::move(rubyTexts)), linkSpans(std::move(linkSpans)) {
@@ -54,12 +57,15 @@ TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<in
   // Focus annotations are optional: empty vectors mean no word in this block has a split.
   // When present, they must be sized in lockstep with words[].
   const bool hasFocus = !focusBoundary.empty();
-  if (words.size() != wordXpos.size() || words.size() != wordStyles.size() || words.size() > 10000 ||
+  if (words.size() != wordXpos.size() || words.size() != wordStyles.size() ||
+      words.size() != visibleTextOffsets.size() || words.size() > 10000 ||
       (hasFocus && (words.size() != focusBoundary.size() || words.size() != focusSuffixX.size()))) {
-    LOG_ERR("TXB", "Construction failed: size mismatch (words=%u, xpos=%u, styles=%u, boundary=%u, suffixX=%u)",
+    LOG_ERR("TXB",
+            "Construction failed: size mismatch (words=%u, xpos=%u, styles=%u, offsets=%u, boundary=%u, "
+            "suffixX=%u)",
             static_cast<uint32_t>(words.size()), static_cast<uint32_t>(wordXpos.size()),
-            static_cast<uint32_t>(wordStyles.size()), static_cast<uint32_t>(focusBoundary.size()),
-            static_cast<uint32_t>(focusSuffixX.size()));
+            static_cast<uint32_t>(wordStyles.size()), static_cast<uint32_t>(visibleTextOffsets.size()),
+            static_cast<uint32_t>(focusBoundary.size()), static_cast<uint32_t>(focusSuffixX.size()));
     isValid = false;
     return;
   }
@@ -98,12 +104,14 @@ TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<in
   // Pass 2: fill. Mutable aliases of the const views bound above.
   auto* textOff = const_cast<uint16_t*>(textOffArr);
   auto* xpos = const_cast<int16_t*>(xposArr);
+  auto* visibleOffsets = const_cast<uint32_t*>(visibleTextOffsetArr);
   auto* styles = const_cast<uint8_t*>(stylesArr);
   auto* text = const_cast<char*>(textArr);
   uint16_t off = 0;
   for (uint16_t i = 0; i < numWords; i++) {
     textOff[i] = off;
     xpos[i] = wordXpos[i];
+    visibleOffsets[i] = visibleTextOffsets[i];
     styles[i] = static_cast<uint8_t>(wordStyles[i]);
     memcpy(text + off, words[i].data(), words[i].size());
     off += static_cast<uint16_t>(words[i].size());
@@ -117,6 +125,13 @@ TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<in
       boundary[i] = focusBoundary[i];
     }
   }
+}
+
+std::optional<uint16_t> TextBlock::findWordForVisibleTextOffset(const uint32_t offset) const {
+  for (uint16_t i = 0; i < numWords; ++i) {
+    if (visibleTextOffsetArr[i] == offset) return i;
+  }
+  return std::nullopt;
 }
 
 bool TextBlock::hasRuby() const {
@@ -377,7 +392,8 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
       LOG_ERR("TXB", "OOM: arena %u bytes", static_cast<uint32_t>(size));
       return nullptr;
     }
-    if (file.read(block->arena.get(), size) != size) {
+    const int bytesRead = file.read(block->arena.get(), size);
+    if (bytesRead < 0 || static_cast<size_t>(bytesRead) != size) {
       LOG_ERR("TXB", "Deserialization failed: arena read (%u bytes)", static_cast<uint32_t>(size));
       return nullptr;
     }

@@ -5,15 +5,18 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <RsvpModeSwitch.h>
 
 #include <algorithm>
 #include <cstring>
 #include <optional>
 
 #include "CrossPointSettings.h"
+#include "EpubReaderUtils.h"
 #include "MappedInputManager.h"
 #include "ReaderLaunchMode.h"
 #include "ReaderUtils.h"
+#include "RsvpCheckpointFile.h"
 #include "activities/ActivityManager.h"
 #include "fontIds.h"
 
@@ -22,10 +25,13 @@ rsvp::RsvpRefreshStats refreshStats;
 }
 
 bool RsvpReaderActivity::loadBook() {
+  bool restoredFromCheckpoint = false;
+  uint32_t restoredTokenHash32 = 0;
+  uint16_t restoredTokenLength = 0;
   auto loadedEpub = makeUniqueNoThrow<Epub>(bookPath, "/.crosspoint");
   if (!loadedEpub) {
     LOG_ERR("RSVP", "Failed to allocate EPUB object");
-    return false;
+    return enterFatalFallback(rsvp::Error::SourceOpen);
   }
 
   const bool uncached = !Storage.exists((loadedEpub->getCachePath() + "/book.bin").c_str());
@@ -39,50 +45,93 @@ bool RsvpReaderActivity::loadBook() {
   }
   if (!loaded) {
     LOG_ERR("RSVP", "Failed to load EPUB");
-    return false;
+    return enterFatalFallback(rsvp::Error::SourceOpen);
   }
   loadedEpub->setupCacheDir();
   epub = std::move(loadedEpub);
 
+  rsvp::ResumeAnchor initialAnchor = launchContext.anchor;
+  if (!rsvp::RsvpCheckpointFile::computeBookRevision(bookPath, bookRevision)) {
+    LOG_ERR("RSVP", "Unable to compute Book Revision; returning to native Paged progress");
+    switchToPagedPending = true;
+    switchToNativeProgress = true;
+  } else if (!initialAnchor.valid) {
+    rsvp::RsvpCheckpoint checkpoint;
+    const auto checkpointStatus = rsvp::RsvpCheckpointFile::load(epub->getCachePath(), bookRevision, checkpoint);
+    if (checkpointStatus == rsvp::CheckpointStatus::Ok) {
+      initialAnchor = checkpoint.anchor;
+      restoredFromCheckpoint = true;
+      restoredTokenHash32 = checkpoint.tokenHash32;
+      restoredTokenLength = checkpoint.tokenLength;
+      restoredActiveRsvpTimeMs = checkpoint.activeRsvpTimeMs;
+    } else if (checkpointStatus != rsvp::CheckpointStatus::Missing) {
+      LOG_INF("RSVP", "Ignoring checkpoint status=%d; Paged progress remains authoritative",
+              static_cast<int>(checkpointStatus));
+      switchToPagedPending = true;
+      switchToNativeProgress = true;
+      invalidateCheckpointOnNativeFallback = checkpointStatus != rsvp::CheckpointStatus::ReadError;
+    }
+  }
+  if (switchToPagedPending) return true;
+
   contentProvider = makeUniqueNoThrow<rsvp::ArduinoEpubContentProvider>(*epub);
   if (!contentProvider) {
     LOG_ERR("RSVP", "Failed to allocate EPUB content provider");
-    return false;
+    return enterFatalFallback(rsvp::Error::SourceOpen);
   }
   source = makeUniqueNoThrow<rsvp::EpubVisibleTextSource>(*contentProvider);
   if (!source) {
     LOG_ERR("RSVP", "Failed to allocate visible EPUB stream");
-    return false;
+    return enterFatalFallback(rsvp::Error::SourceOpen);
   }
   rsvp::RsvpPacingConfig pacing;
   pacing.paceWpm = SETTINGS.rsvpPaceWpm;
   pacing.clausePausePercent = static_cast<uint16_t>(SETTINGS.rsvpClausePauseTenths) * 10;
   pacing.sentencePausePercent = static_cast<uint16_t>(SETTINGS.rsvpSentencePauseTenths) * 10;
   pacing.paragraphPausePercent = static_cast<uint16_t>(SETTINGS.rsvpParagraphPauseTenths) * 10;
-  session = makeUniqueNoThrow<rsvp::RsvpSession>(*source, rsvp::ResumeAnchor{}, pacing);
+  session = makeUniqueNoThrow<rsvp::RsvpSession>(*source, initialAnchor, pacing);
   if (!session) {
     LOG_ERR("RSVP", "Failed to allocate session");
-    return false;
+    return enterFatalFallback(rsvp::Error::SourceOpen);
   }
 
   currentDecision = session->step({.nowMs = millis()});
+  if (restoredFromCheckpoint && (!currentDecision.render || session->currentTokenHash() != restoredTokenHash32 ||
+                                 session->currentTokenLength() != restoredTokenLength)) {
+    LOG_INF("RSVP", "Checkpoint token identity no longer resolves; returning to Paged progress");
+    currentDecision = {};
+    switchToPagedPending = true;
+    switchToNativeProgress = true;
+    invalidateCheckpointOnNativeFallback = true;
+    return true;
+  }
   if (!currentDecision.render && currentDecision.pauseReason == rsvp::PauseReason::None &&
       currentDecision.state != rsvp::State::Finished) {
     LOG_ERR("RSVP", "No readable first token (state=%d error=%d)", static_cast<int>(currentDecision.state),
             static_cast<int>(currentDecision.error));
-    return false;
+    return enterFatalFallback(currentDecision.error == rsvp::Error::None ? rsvp::Error::InvalidDocument
+                                                                         : currentDecision.error);
   }
   return true;
 }
 
 void RsvpReaderActivity::loop() {
-  if (!session) {
-    finish();
+  if (fatalFallbackReady.exchange(false)) {
+    switchToPagedPending = true;
+    switchToPaged();
     return;
   }
-
   if (switchToPagedPending) {
-    activityManager.goToReader(bookPath, false, ReaderLaunchMode::Paged);
+    switchToPaged();
+    return;
+  }
+  if (checkpointRequestedFromRender.exchange(false)) {
+    RenderLock lock(*this);
+    if (!saveCheckpoint()) LOG_ERR("RSVP", "Failed to save deferred RSVP checkpoint");
+  }
+  if (!session) {
+    if (fatalFallbackPending.load(std::memory_order_acquire)) return;
+    finish();
     return;
   }
 
@@ -108,13 +157,83 @@ void RsvpReaderActivity::loop() {
   else if (mappedInput.wasReleased(MappedInputManager::Button::PageForward))
     action = rsvp::Action::StepForward;
 
-  const auto decision = session->step({.nowMs = millis(), .action = action});
-  if (decision.switchToPaged) {
-    switchToPagedPending = true;
-    activityManager.goToReader(bookPath, false, ReaderLaunchMode::Paged);
+  rsvp::Decision decision;
+  {
+    RenderLock lock(*this);
+    decision = session->step({.nowMs = millis(), .action = action});
+    if (decision.checkpointRequested && !saveCheckpoint()) {
+      LOG_ERR("RSVP", "Failed to save RSVP checkpoint");
+    }
+    applyDecision(decision);
+  }
+  if (decision.state == rsvp::State::Error) {
+    fatalFallbackPending.store(true, std::memory_order_release);
     return;
   }
-  applyDecision(decision);
+  if (decision.switchToPaged) {
+    switchToPagedPending = true;
+    switchToPaged();
+    return;
+  }
+}
+
+bool RsvpReaderActivity::enterFatalFallback(const rsvp::Error error) {
+  currentDecision = {};
+  currentDecision.state = rsvp::State::Error;
+  currentDecision.error = error;
+  currentDecision.pauseReason = rsvp::PauseReason::Error;
+  fatalFallbackPending.store(true, std::memory_order_release);
+  return true;
+}
+
+bool RsvpReaderActivity::saveCheckpoint() {
+  if (checkpointWritesDisabled || !session || !epub || bookRevision == 0) return false;
+  const auto anchor = session->currentAnchor();
+  if (!anchor.valid) return false;
+
+  const rsvp::RsvpCheckpoint checkpoint{
+      .bookRevision = bookRevision,
+      .anchor = anchor,
+      .tokenHash32 = session->currentTokenHash(),
+      .tokenLength = session->currentTokenLength(),
+      .activeRsvpTimeMs = restoredActiveRsvpTimeMs + session->activeReadingMs(),
+  };
+  const bool checkpointSaved = rsvp::RsvpCheckpointFile::save(epub->getCachePath(), checkpoint);
+  if (!checkpointSaved) return false;
+  if (lastNativeProgressAnchor.valid && lastNativeProgressAnchor.spineIndex == anchor.spineIndex &&
+      lastNativeProgressAnchor.visibleTextOffset == anchor.visibleTextOffset) {
+    return true;
+  }
+  // visibleTextOffset is authoritative when Paged rebuilds the chapter, so a
+  // page number is not needed here. This keeps native progress aligned with
+  // RSVP even when pagination settings change between modes.
+  const bool progressSaved = EpubReaderUtils::saveProgress(*epub, anchor.spineIndex, 0, 0, anchor.visibleTextOffset);
+  if (progressSaved) lastNativeProgressAnchor = anchor;
+  return progressSaved;
+}
+
+void RsvpReaderActivity::switchToPaged() {
+  if (switchToNativeProgress) {
+    checkpointWritesDisabled = true;
+    if (epub && invalidateCheckpointOnNativeFallback) {
+      rsvp::RsvpCheckpointFile::invalidate(epub->getCachePath());
+    }
+    activityManager.goToReader(bookPath, false, ReaderLaunchContext{ReaderLaunchMode::Paged});
+    return;
+  }
+  const auto anchor = session ? session->currentAnchor() : rsvp::ResumeAnchor{};
+  const auto decision = rsvp::RsvpModeSwitch::fromRsvp(anchor);
+  saveCheckpoint();
+  activityManager.goToReader(
+      bookPath, false,
+      ReaderLaunchContext{ReaderLaunchMode::Paged, decision.anchor, decision.temporaryHighlight && anchor.valid,
+                          session ? session->currentTokenHash() : 0,
+                          session ? session->currentTokenLength() : uint16_t{0}});
+}
+
+void RsvpReaderActivity::onExit() {
+  if (!checkpointWritesDisabled) saveCheckpoint();
+  ReaderActivity::onExit();
 }
 
 void RsvpReaderActivity::applyDecision(const rsvp::Decision& decision) {
@@ -259,5 +378,7 @@ void RsvpReaderActivity::renderBook() {
       LOG_ERR("RSVP", "Ignored presentation acknowledgement for frame %lu",
               static_cast<unsigned long>(currentDecision.frame.id));
     }
+    if (acknowledgement.checkpointRequested) checkpointRequestedFromRender.store(true);
   }
+  if (fatalFallbackPending.load(std::memory_order_acquire)) fatalFallbackReady.store(true);
 }

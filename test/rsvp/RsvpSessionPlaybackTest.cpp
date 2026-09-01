@@ -25,6 +25,15 @@ rsvp::DocumentEvent marker(const rsvp::EventKind kind) {
   return event;
 }
 
+uint32_t fnv1a(const char* text, const uint16_t length) {
+  uint32_t hash = 2166136261U;
+  for (uint16_t index = 0; index < length; ++index) {
+    hash ^= static_cast<uint8_t>(text[index]);
+    hash *= 16777619U;
+  }
+  return hash;
+}
+
 class VectorSource final : public rsvp::RsvpSource {
  public:
   explicit VectorSource(std::vector<rsvp::DocumentEvent> events) : events(std::move(events)) {}
@@ -67,9 +76,9 @@ std::string frameText(const rsvp::Decision& decision) {
 void acknowledge(rsvp::RsvpSession& session, const rsvp::Decision& frame, const uint32_t nowMs,
                  const uint32_t refreshDurationMs = 0) {
   const auto acknowledgement = session.step({.nowMs = nowMs,
-                                              .action = rsvp::Action::FramePresented,
-                                              .presentedFrameId = frame.frame.id,
-                                              .refreshDurationMs = refreshDurationMs});
+                                             .action = rsvp::Action::FramePresented,
+                                             .presentedFrameId = frame.frame.id,
+                                             .refreshDurationMs = refreshDurationMs});
   ASSERT_TRUE(acknowledgement.presentationAccepted);
 }
 
@@ -172,8 +181,8 @@ TEST(RsvpSessionPlayback, ParagraphBoundaryRequestsPeriodicCleanupRefresh) {
 }
 
 TEST(RsvpSessionPlayback, ChapterBoundaryPausesBeforeTheNextWord) {
-  VectorSource source({word("one", 0), marker(rsvp::EventKind::ChapterBoundary), word("two", 4),
-                       marker(rsvp::EventKind::EndOfBook)});
+  VectorSource source(
+      {word("one", 0), marker(rsvp::EventKind::ChapterBoundary), word("two", 4), marker(rsvp::EventKind::EndOfBook)});
   rsvp::RsvpSession session(source);
 
   const auto first = session.step({});
@@ -208,8 +217,8 @@ TEST(RsvpSessionPlayback, UnsupportedElementsOfferPagedFallbackWithReason) {
 }
 
 TEST(RsvpSessionPlayback, FrameCarriesNormalizedUnicodeOrpPreparation) {
-  VectorSource source({word("\xD0\xB5\xCC\x88-\xD0\xBA\xD0\xBE\xD1\x82", 0),
-                       marker(rsvp::EventKind::EndOfBook)});
+  constexpr char rawWord[] = "\xD0\xB5\xCC\x88-\xD0\xBA\xD0\xBE\xD1\x82";
+  VectorSource source({word(rawWord, 0), marker(rsvp::EventKind::EndOfBook)});
   rsvp::RsvpSession session(source);
 
   const auto decision = session.step({});
@@ -219,6 +228,9 @@ TEST(RsvpSessionPlayback, FrameCarriesNormalizedUnicodeOrpPreparation) {
   EXPECT_STREQ(decision.frame.text, "\xD1\x91-\xD0\xBA\xD0\xBE\xD1\x82");
   const auto& prepared = *decision.frame.preparedWord;
   EXPECT_EQ(std::string(prepared.text + prepared.pivot.begin, prepared.pivot.size()), "\xD0\xBA");
+  EXPECT_EQ(session.currentTokenLength(), prepared.textLength);
+  EXPECT_EQ(session.currentTokenHash(), fnv1a(prepared.text, prepared.textLength));
+  EXPECT_NE(session.currentTokenHash(), fnv1a(rawWord, sizeof(rawWord) - 1));
 }
 
 TEST(RsvpSessionPlayback, PixelOverflowPausesWithPagedModeAvailable) {
@@ -265,6 +277,94 @@ TEST(RsvpSessionPlayback, ResumeAnchorDisambiguatesSameOffsetOrdinal) {
 
   const auto decision = session.step({});
   EXPECT_EQ(frameText(decision), "second");
+}
+
+TEST(RsvpSessionPlayback, CheckpointPolicyCoversPeriodicPauseAndModeSwitch) {
+  VectorSource source({word("one", 7), word("two", 11), marker(rsvp::EventKind::EndOfBook)});
+  rsvp::RsvpSession session(source);
+
+  const auto first = session.step({.nowMs = 100});
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 7u);
+  EXPECT_FALSE(first.checkpointRequested);
+  acknowledge(session, first, 200);
+
+  EXPECT_FALSE(session.step({.nowMs = 200, .action = rsvp::Action::TogglePlayback}).checkpointRequested);
+  const auto second = session.step({.nowMs = 30199});
+  EXPECT_FALSE(second.checkpointRequested);
+  const auto periodic =
+      session.step({.nowMs = 30200, .action = rsvp::Action::FramePresented, .presentedFrameId = second.frame.id});
+  EXPECT_TRUE(periodic.presentationAccepted);
+  EXPECT_TRUE(periodic.checkpointRequested);
+
+  const auto paused = session.step({.nowMs = 30300, .action = rsvp::Action::TogglePlayback});
+  EXPECT_EQ(paused.state, rsvp::State::Paused);
+  EXPECT_TRUE(paused.checkpointRequested);
+
+  const auto switched = session.step({.nowMs = 30400, .action = rsvp::Action::ModeSwitch});
+  EXPECT_TRUE(switched.checkpointRequested);
+  EXPECT_TRUE(switched.switchToPaged);
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 11u);
+}
+
+TEST(RsvpSessionPlayback, ManualPausedNavigationRequestsCheckpoint) {
+  VectorSource source({word("one", 0), word("two", 4), word("three", 8), marker(rsvp::EventKind::EndOfBook)});
+  rsvp::RsvpSession session(source);
+
+  const auto first = session.step({});
+  acknowledge(session, first, 0);
+  const auto forward = session.step({.action = rsvp::Action::StepForward});
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 4U);
+  EXPECT_TRUE(forward.checkpointRequested);
+  acknowledge(session, forward, 0);
+
+  const auto rewind = session.step({.action = rsvp::Action::RewindFive});
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 0U);
+  EXPECT_TRUE(rewind.checkpointRequested);
+}
+
+TEST(RsvpSessionPlayback, ActiveReadingTimeExcludesPausedTime) {
+  VectorSource source({word("one", 0), word("two", 4), marker(rsvp::EventKind::EndOfBook)});
+  rsvp::RsvpSession session(source);
+
+  const auto first = session.step({.nowMs = 100});
+  acknowledge(session, first, 200);
+  session.step({.nowMs = 300, .action = rsvp::Action::TogglePlayback});
+  const auto second = session.step({.nowMs = 1300});
+  acknowledge(session, second, 1400);
+  session.step({.nowMs = 1800, .action = rsvp::Action::TogglePlayback});
+  session.step({.nowMs = 5000});
+
+  EXPECT_EQ(session.activeReadingMs(), 1500u);
+}
+
+TEST(RsvpSessionPlayback, FatalSourceErrorReturnsToPagedAtLastSafeAnchor) {
+  VectorSource source({word("safe", 42), marker(rsvp::EventKind::Error)});
+  rsvp::RsvpSession session(source);
+
+  const auto first = session.step({});
+  acknowledge(session, first, 0);
+  session.step({.action = rsvp::Action::TogglePlayback});
+  const auto failure = session.step({.nowMs = 600});
+
+  EXPECT_EQ(failure.state, rsvp::State::Error);
+  EXPECT_TRUE(failure.switchToPaged);
+  EXPECT_TRUE(failure.checkpointRequested);
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 42u);
+}
+
+TEST(RsvpSessionPlayback, InvalidNextTokenKeepsTheLastSuccessfullyDisplayedAnchor) {
+  VectorSource source({word("safe", 42), word("!!!", 99), marker(rsvp::EventKind::EndOfBook)});
+  rsvp::RsvpSession session(source);
+
+  const auto first = session.step({});
+  acknowledge(session, first, 0);
+  session.step({.action = rsvp::Action::TogglePlayback});
+  const auto failure = session.step({.nowMs = 600});
+
+  EXPECT_EQ(failure.state, rsvp::State::Error);
+  EXPECT_EQ(failure.error, rsvp::Error::InvalidDocument);
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 42U);
+  EXPECT_EQ(session.currentTokenLength(), 4U);
 }
 
 }  // namespace
