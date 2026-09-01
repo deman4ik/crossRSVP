@@ -180,9 +180,14 @@ inline SettingInfo buildDictionarySetting(const std::vector<DictionaryEntry>& di
 
 inline std::vector<StrId> buildLongPressMenuValues() {
   static constexpr StrId VALUES[] = {StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION,
-                                     StrId::STR_DICTIONARY, StrId::STR_READER_MENU};
-  const size_t count = BoardConfig::hasHomeKey() ? std::size(VALUES) : std::size(VALUES) - 1;
-  return {VALUES, VALUES + count};
+                                     StrId::STR_DICTIONARY, StrId::STR_READER_MENU, StrId::STR_RSVP_MODE};
+  if (BoardConfig::hasHomeKey()) return {VALUES, VALUES + std::size(VALUES)};
+
+  // Long-press Reader Menu is a Home-key action on touch boards. Keep its
+  // persisted slot (4) occupied on button boards while hiding the unsupported
+  // label; otherwise the appended RSVP value (5) would be written as index 4.
+  return {StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY,
+          StrId::STR_DISABLED, StrId::STR_RSVP_MODE};
 }
 
 // Shared settings list used by both the device settings UI and the web settings API.
@@ -286,6 +291,26 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
             StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
             {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_ORIENTATION_INVERTED, StrId::STR_LANDSCAPE_CCW},
             "orientation", StrId::STR_CAT_READER),
+        SettingInfo::Value(StrId::STR_RSVP_PACE, &CrossPointSettings::rsvpPaceWpm,
+                           {CrossPointSettings::RSVP_PACE_MIN_WPM, CrossPointSettings::RSVP_PACE_MAX_WPM,
+                            CrossPointSettings::RSVP_PACE_STEP_WPM},
+                           "rsvpPaceWpm", StrId::STR_CAT_READER),
+        SettingInfo::Value(StrId::STR_RSVP_FONT_SIZE, &CrossPointSettings::rsvpFontSize,
+                           {CrossPointSettings::RSVP_FONT_SIZE_MIN, CrossPointSettings::RSVP_FONT_SIZE_MAX,
+                            CrossPointSettings::RSVP_FONT_SIZE_STEP},
+                           "rsvpFontSize", StrId::STR_CAT_READER),
+        SettingInfo::Enum(StrId::STR_RSVP_GUIDES, &CrossPointSettings::rsvpGuideStyle,
+                          {StrId::STR_RSVP_GUIDES_OFF, StrId::STR_RSVP_GUIDES_ON}, "rsvpGuideStyle",
+                          StrId::STR_CAT_READER),
+        SettingInfo::Value(StrId::STR_RSVP_CLAUSE_PAUSE, &CrossPointSettings::rsvpClausePauseTenths,
+                           {CrossPointSettings::RSVP_PAUSE_MIN_TENTHS, CrossPointSettings::RSVP_PAUSE_MAX_TENTHS, 1},
+                           "rsvpClausePauseTenths", StrId::STR_CAT_READER),
+        SettingInfo::Value(StrId::STR_RSVP_SENTENCE_PAUSE, &CrossPointSettings::rsvpSentencePauseTenths,
+                           {CrossPointSettings::RSVP_PAUSE_MIN_TENTHS, CrossPointSettings::RSVP_PAUSE_MAX_TENTHS, 1},
+                           "rsvpSentencePauseTenths", StrId::STR_CAT_READER),
+        SettingInfo::Value(StrId::STR_RSVP_PARAGRAPH_PAUSE, &CrossPointSettings::rsvpParagraphPauseTenths,
+                           {CrossPointSettings::RSVP_PAUSE_MIN_TENTHS, CrossPointSettings::RSVP_PAUSE_MAX_TENTHS, 1},
+                           "rsvpParagraphPauseTenths", StrId::STR_CAT_READER),
         SettingInfo::Toggle(StrId::STR_EXTRA_SPACING, &CrossPointSettings::extraParagraphSpacing,
                             "extraParagraphSpacing", StrId::STR_CAT_READER)
             .withTextSettings(),

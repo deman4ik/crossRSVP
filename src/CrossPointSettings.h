@@ -151,6 +151,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LP_MENU_BOOKMARK = 2,
     LP_MENU_DICTIONARY = 3,
     LP_MENU_READER_MENU = 4,
+    LP_MENU_RSVP_MODE = 5,
     LONG_PRESS_MENU_FUNCTION_COUNT
   };
 
@@ -195,6 +196,28 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     QUICK_RESUME_AFTER_TIMEOUT = 1,
     QUICK_RESUME_SLEEP_SCREEN_COUNT
   };
+
+  // RSVP ORP guide presentation. The numeric values are persisted in
+  // settings.json; append new styles rather than reordering these values.
+  enum RSVP_GUIDE_STYLE {
+    RSVP_GUIDES_OFF = 0,
+    RSVP_GUIDES_ON = 1,
+    RSVP_GUIDE_STYLE_COUNT
+  };
+
+  static constexpr uint8_t RSVP_PACE_MIN_WPM = 60;
+  static constexpr uint8_t RSVP_PACE_MAX_WPM = 120;
+  static constexpr uint8_t RSVP_PACE_STEP_WPM = 10;
+  static constexpr uint8_t RSVP_DEFAULT_PACE_WPM = 100;
+  static constexpr uint8_t RSVP_FONT_SIZE_MIN = 12;
+  static constexpr uint8_t RSVP_FONT_SIZE_MAX = 18;
+  static constexpr uint8_t RSVP_FONT_SIZE_STEP = 2;
+  static constexpr uint8_t RSVP_DEFAULT_FONT_SIZE = DEFAULT_FONT_POINT_SIZE;
+  static constexpr uint8_t RSVP_PAUSE_MIN_TENTHS = 10;
+  static constexpr uint8_t RSVP_PAUSE_MAX_TENTHS = 40;
+  static constexpr uint8_t RSVP_CLAUSE_PAUSE_DEFAULT_TENTHS = 15;
+  static constexpr uint8_t RSVP_SENTENCE_PAUSE_DEFAULT_TENTHS = 20;
+  static constexpr uint8_t RSVP_PARAGRAPH_PAUSE_DEFAULT_TENTHS = 25;
 
   // Sleep screen settings
   uint8_t sleepScreen = DARK;
@@ -327,6 +350,14 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint16_t keyboardLayouts = 0;
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
+  // RSVP settings are global (not per-book) and persist with the regular settings file.
+  uint8_t rsvpPaceWpm = RSVP_DEFAULT_PACE_WPM;
+  uint8_t rsvpFontSize = RSVP_DEFAULT_FONT_SIZE;
+  uint8_t rsvpGuideStyle = RSVP_GUIDES_ON;
+  // Deliberate linguistic pauses, stored as tenths of the base frame interval.
+  uint8_t rsvpClausePauseTenths = RSVP_CLAUSE_PAUSE_DEFAULT_TENTHS;
+  uint8_t rsvpSentencePauseTenths = RSVP_SENTENCE_PAUSE_DEFAULT_TENTHS;
+  uint8_t rsvpParagraphPauseTenths = RSVP_PARAGRAPH_PAUSE_DEFAULT_TENTHS;
 
   static constexpr uint8_t MIN_SLEEP_TIMEOUT_MINUTES = 1;
   static constexpr uint8_t SLEEP_TIMEOUT_NEVER_MINUTES = 31;
