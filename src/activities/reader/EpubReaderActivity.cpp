@@ -490,6 +490,9 @@ void EpubReaderActivity::loop() {
       case CrossPointSettings::LP_MENU_DICTIONARY:
         openDictionaryWordSelect();
         return;
+      case CrossPointSettings::LP_MENU_RSVP_MODE:
+        activityManager.goToReader(bookPath, false, ReaderLaunchMode::Rsvp);
+        return;
       case CrossPointSettings::LP_MENU_READER_MENU:
       case CrossPointSettings::LP_MENU_DISABLED:
       default:
@@ -524,6 +527,9 @@ void EpubReaderActivity::loop() {
         } else {
           openReaderMenu();
         }
+        return;
+      case CrossPointSettings::LP_MENU_RSVP_MODE:
+        activityManager.goToReader(bookPath, false, ReaderLaunchMode::Rsvp);
         return;
       case CrossPointSettings::LP_MENU_DISABLED:
       default:
@@ -917,6 +923,7 @@ unsigned long EpubReaderActivity::confirmLongPressThreshold() const {
   switch (SETTINGS.longPressMenuFunction) {
     case CrossPointSettings::LP_MENU_BOOKMARK:
     case CrossPointSettings::LP_MENU_DICTIONARY:
+    case CrossPointSettings::LP_MENU_RSVP_MODE:
       return ReaderUtils::BOOKMARK_HOLD_MS;
     case CrossPointSettings::LP_MENU_KOSYNC:
       return KOREADER_STORE.hasCredentials() ? ReaderUtils::GO_HOME_MS : 0;

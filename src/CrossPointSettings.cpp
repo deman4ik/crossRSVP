@@ -27,6 +27,12 @@ void copyToField(char* dest, const char* src, const size_t maxLen) {
   dest[maxLen - 1] = '\0';
 }
 
+uint8_t normalizeSteppedValue(const uint8_t value, const uint8_t minValue, const uint8_t maxValue,
+                              const uint8_t step, const uint8_t fallback) {
+  if (value < minValue || value > maxValue || step == 0 || (value - minValue) % step != 0) return fallback;
+  return value;
+}
+
 }  // namespace
 
 void CrossPointSettings::validateFrontButtonMapping(CrossPointSettings& settings) {
@@ -178,6 +184,20 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
       s.*(info.valuePtr) = v;
     }
   }
+
+  // Value settings use their step for the on-device picker, but the web API
+  // and older settings files can still provide an arbitrary in-range number.
+  // Normalize RSVP values so persisted state always describes a selectable
+  // option and request one repair write when an old value needed correction.
+  const uint8_t loadedPace = rsvpPaceWpm;
+  rsvpPaceWpm = normalizeSteppedValue(rsvpPaceWpm, RSVP_PACE_MIN_WPM, RSVP_PACE_MAX_WPM, RSVP_PACE_STEP_WPM,
+                                      RSVP_DEFAULT_PACE_WPM);
+  if (!doc["rsvpPaceWpm"].isNull() && loadedPace != rsvpPaceWpm) needsResave = true;
+
+  const uint8_t loadedRsvpFontSize = rsvpFontSize;
+  rsvpFontSize = normalizeSteppedValue(rsvpFontSize, RSVP_FONT_SIZE_MIN, RSVP_FONT_SIZE_MAX, RSVP_FONT_SIZE_STEP,
+                                       RSVP_DEFAULT_FONT_SIZE);
+  if (!doc["rsvpFontSize"].isNull() && loadedRsvpFontSize != rsvpFontSize) needsResave = true;
 
   if (doc["sleepTimeoutMinutes"].isNull() && !doc["sleepTimeout"].isNull()) {
     const uint8_t legacyValue =
