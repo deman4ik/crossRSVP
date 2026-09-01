@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #define REPLACEMENT_GLYPH 0xFFFD
@@ -19,6 +20,12 @@ void utf8TruncateChars(std::string& str, size_t numChars);
 // precomposed Hangul syllables, so NFD text (some EPUB chapter titles; every
 // filename written by macOS) otherwise renders broken or blank.
 std::string utf8ComposeNfc(const std::string& in);
+
+// Bounded, non-allocating NFC composition. The output is always NUL-terminated
+// when outCapacity is non-zero. Soft hyphens can be omitted for lexical text.
+bool utf8ComposeNfcToBuffer(const char* in, size_t inLength, char* out,
+                            size_t outCapacity, size_t& outLength,
+                            bool removeSoftHyphen = false);
 
 // Truncate a raw char buffer to the last complete UTF-8 codepoint boundary.
 // Returns the new length (<= len). If the buffer ends mid-sequence, the
