@@ -1,6 +1,7 @@
 add_executable(RsvpTest
   RsvpTest.cpp
   RsvpLexicalCoreTest.cpp
+  RsvpSessionPlaybackTest.cpp
   ${REPO_ROOT}/lib/Rsvp/EpubVisibleTextSource.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpRefreshStats.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpSession.cpp
@@ -32,6 +33,7 @@ target_include_directories(RsvpTest PRIVATE
   ${REPO_ROOT}/lib/Rsvp
   ${REPO_ROOT}/lib/Epub
   ${REPO_ROOT}/lib/Memory
+  ${REPO_ROOT}/lib/Utf8
 )
 
 target_link_libraries(RsvpTest PRIVATE

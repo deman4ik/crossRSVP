@@ -34,8 +34,7 @@ bool isUnicodeWhitespace(const char* bytes, const size_t length) {
   const auto second = static_cast<uint8_t>(bytes[1]);
   const auto third = static_cast<uint8_t>(bytes[2]);
   return (first == 0xE2 && second == 0x80 && ((third >= 0x80 && third <= 0x8A) || third == 0xAF)) ||
-         (first == 0xE2 && second == 0x81 && third == 0x9F) ||
-         (first == 0xE3 && second == 0x80 && third == 0x80);
+         (first == 0xE2 && second == 0x81 && third == 0x9F) || (first == 0xE3 && second == 0x80 && third == 0x80);
 }
 
 bool isLexicalCodepoint(const uint32_t codepoint) {
@@ -145,6 +144,7 @@ void VisibleContentStream::reset(const uint16_t newSpineIndex, EventSink& newSin
   wordLength = 0;
   word[0] = '\0';
   wordOversized = false;
+  joiningDiscretionaryHyphen = false;
   insideTag = false;
   tagIsClose = false;
   tagNameDone = false;
@@ -162,6 +162,9 @@ void VisibleContentStream::reset(const uint16_t newSpineIndex, EventSink& newSin
   previousVisibleWasCr = false;
   emittedVisibleContent = false;
   lastEventWasBoundary = true;
+  lastAnchorOffset = 0;
+  nextSameOffsetOrdinal = 0;
+  anchorOffsetInitialized = false;
   stopped = false;
 }
 
@@ -226,6 +229,10 @@ bool VisibleContentStream::processTextByte(const uint8_t byte) {
   }
   previousVisibleWasCr = byte == '\r';
   if (isWhitespace(byte)) {
+    if (beginDiscretionaryHyphenJoin(byte) || joiningDiscretionaryHyphen) {
+      offset++;
+      return true;
+    }
     if (!flushWord()) return false;
     offset++;
     return true;
@@ -234,11 +241,14 @@ bool VisibleContentStream::processTextByte(const uint8_t byte) {
     if (!wordOversized && wordLength + 1 <= MAX_TOKEN_BYTES) {
       word[wordLength++] = static_cast<char>(byte);
       word[wordLength] = '\0';
+      if (!splitCompletedEmDash()) return false;
     } else {
       wordOversized = true;
     }
+    joiningDiscretionaryHyphen = false;
     return true;
   }
+  joiningDiscretionaryHyphen = false;
   return appendVisibleCodepoint(reinterpret_cast<const char*>(&byte), 1);
 }
 
@@ -339,9 +349,8 @@ bool VisibleContentStream::openTag() {
   if (equalsIgnoreCase(tagName, "img")) return emitNonText(NonTextKind::Image);
   if (equalsIgnoreCase(tagName, "table")) return emitNonText(NonTextKind::Table);
   if (equalsIgnoreCase(tagName, "hr")) return emitNonText(NonTextKind::HorizontalRule);
-  if (equalsIgnoreCase(tagName, "svg") || equalsIgnoreCase(tagName, "video") ||
-      equalsIgnoreCase(tagName, "audio") || equalsIgnoreCase(tagName, "object") ||
-      equalsIgnoreCase(tagName, "canvas") || equalsIgnoreCase(tagName, "math") ||
+  if (equalsIgnoreCase(tagName, "svg") || equalsIgnoreCase(tagName, "video") || equalsIgnoreCase(tagName, "audio") ||
+      equalsIgnoreCase(tagName, "object") || equalsIgnoreCase(tagName, "canvas") || equalsIgnoreCase(tagName, "math") ||
       equalsIgnoreCase(tagName, "iframe") || equalsIgnoreCase(tagName, "embed")) {
     return emitNonText(NonTextKind::Other);
   }
@@ -384,11 +393,17 @@ bool VisibleContentStream::appendVisibleBytes(const char* bytes, const size_t le
 
 bool VisibleContentStream::appendVisibleCodepoint(const char* bytes, const size_t length) {
   if (isUnicodeWhitespace(bytes, length)) {
+    if (beginDiscretionaryHyphenJoin('\n') || joiningDiscretionaryHyphen) {
+      offset++;
+      previousVisibleWasCr = false;
+      return true;
+    }
     if (!flushWord()) return false;
     offset++;
     previousVisibleWasCr = false;
     return true;
   }
+  joiningDiscretionaryHyphen = false;
   if (wordLength == 0 && !wordOversized) wordOffset = offset;
   if (!wordOversized && wordLength + length <= MAX_TOKEN_BYTES) {
     memcpy(word + wordLength, bytes, length);
@@ -399,16 +414,65 @@ bool VisibleContentStream::appendVisibleCodepoint(const char* bytes, const size_
   }
   offset++;
   previousVisibleWasCr = false;
+  return length == 3 && static_cast<uint8_t>(bytes[0]) == 0xE2 && static_cast<uint8_t>(bytes[1]) == 0x80 &&
+                 static_cast<uint8_t>(bytes[2]) == 0x94
+             ? splitCompletedEmDash()
+             : true;
+}
+
+bool VisibleContentStream::splitCompletedEmDash() {
+  if (wordOversized || wordLength < 3 || static_cast<uint8_t>(word[wordLength - 3]) != 0xE2 ||
+      static_cast<uint8_t>(word[wordLength - 2]) != 0x80 || static_cast<uint8_t>(word[wordLength - 1]) != 0x94) {
+    return true;
+  }
+
+  wordLength = static_cast<uint16_t>(wordLength - 3);
+  word[wordLength] = '\0';
+  if (!flushWord()) return false;
+  wordOffset = offset - 1;
+  word[0] = static_cast<char>(0xE2);
+  word[1] = static_cast<char>(0x80);
+  word[2] = static_cast<char>(0x94);
+  word[3] = '\0';
+  wordLength = 3;
   return true;
+}
+
+bool VisibleContentStream::beginDiscretionaryHyphenJoin(const uint8_t whitespace) {
+  if (wordOversized || wordLength == 0) return false;
+
+  if (wordLength >= 2 && static_cast<uint8_t>(word[wordLength - 2]) == 0xC2 &&
+      static_cast<uint8_t>(word[wordLength - 1]) == 0xAD) {
+    wordLength = static_cast<uint16_t>(wordLength - 2);
+  } else if ((whitespace == '\r' || whitespace == '\n') && word[wordLength - 1] == '-') {
+    wordLength--;
+  } else {
+    return false;
+  }
+  word[wordLength] = '\0';
+  joiningDiscretionaryHyphen = true;
+  return true;
+}
+
+void VisibleContentStream::assignAnchor(DocumentEvent& event, const uint32_t visibleOffset) {
+  if (!anchorOffsetInitialized || lastAnchorOffset != visibleOffset) {
+    lastAnchorOffset = visibleOffset;
+    nextSameOffsetOrdinal = 0;
+    anchorOffsetInitialized = true;
+  }
+  event.anchor = {.spineIndex = spineIndex,
+                  .visibleTextOffset = visibleOffset,
+                  .sameOffsetOrdinal = nextSameOffsetOrdinal++,
+                  .valid = true};
 }
 
 bool VisibleContentStream::flushWord() {
   if (wordLength == 0 && !wordOversized) return true;
   DocumentEvent event;
-  event.kind = wordOversized ? EventKind::OversizedWord
-                             : (containsLexicalCodepoint(word, wordLength) ? EventKind::Word
-                                                                          : EventKind::NonLexicalText);
-  event.anchor = {.spineIndex = spineIndex, .visibleTextOffset = wordOffset, .valid = true};
+  event.kind = wordOversized
+                   ? EventKind::OversizedWord
+                   : (containsLexicalCodepoint(word, wordLength) ? EventKind::Word : EventKind::NonLexicalText);
+  assignAnchor(event, wordOffset);
   if (!wordOversized) {
     event.textLength = wordLength;
     memcpy(event.text, word, wordLength + 1);
@@ -435,7 +499,7 @@ bool VisibleContentStream::emitNonText(const NonTextKind kind) {
 bool VisibleContentStream::emit(const EventKind kind, const NonTextKind nonText) {
   DocumentEvent event;
   event.kind = kind;
-  event.anchor = {.spineIndex = spineIndex, .visibleTextOffset = offset, .valid = true};
+  assignAnchor(event, offset);
   event.nonText = nonText;
   emittedVisibleContent = true;
   lastEventWasBoundary = kind == EventKind::ParagraphBoundary;

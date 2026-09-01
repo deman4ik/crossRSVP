@@ -20,7 +20,7 @@ class SelectingSink final : public EventSink {
 
   bool onEvent(const DocumentEvent& candidate) override {
     if (candidate.anchor.visibleTextOffset < minimumVisibleOffset) return true;
-    if (eligibleOrdinal++ != targetOrdinal) return true;
+    if (candidate.anchor.visibleTextOffset == minimumVisibleOffset && eligibleOrdinal++ != targetOrdinal) return true;
     event = candidate;
     found = true;
     return false;
@@ -79,7 +79,7 @@ bool EpubVisibleTextSource::open(const ResumeAnchor* anchor) {
   if (initialSpine < 0 || initialSpine >= totalSpines) return false;
 
   spineIndex = static_cast<uint16_t>(initialSpine);
-  eventOrdinal = 0;
+  eventOrdinal = anchor && anchor->valid ? anchor->sameOffsetOrdinal : 0;
   opened = true;
   return true;
 }
@@ -95,7 +95,8 @@ bool EpubVisibleTextSource::next(DocumentEvent& out) {
       return true;
     }
     if (found) {
-      eventOrdinal++;
+      minimumVisibleOffset = out.anchor.visibleTextOffset;
+      eventOrdinal = static_cast<uint32_t>(out.anchor.sameOffsetOrdinal) + 1;
       return true;
     }
 

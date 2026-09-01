@@ -52,11 +52,35 @@ enum class Action : uint8_t {
   ModeSwitch,
   Exit,
   FramePresented,
+  WordDoesNotFit,
 };
 
 enum class State : uint8_t { Empty, Paused, Playing, Boundary, Error, Finished, Exited };
 
 enum class Error : uint8_t { None, SourceOpen, SourceRead, InvalidDocument };
+
+enum class PauseReason : uint8_t {
+  None,
+  Chapter,
+  Image,
+  Table,
+  HorizontalRule,
+  OtherContent,
+  OversizedWord,
+  Error,
+};
+
+struct RsvpPacingConfig {
+  uint16_t paceWpm = 100;
+  uint16_t minimumWpm = 60;
+  uint16_t maximumWpm = 120;
+  uint16_t safeMaximumWpm = 100;
+  uint16_t paceStepWpm = 10;
+  uint16_t clausePausePercent = 150;
+  uint16_t sentencePausePercent = 200;
+  uint16_t paragraphPausePercent = 250;
+  uint16_t cleanupEveryFrames = 20;
+};
 
 struct Input {
   uint32_t nowMs = 0;
@@ -65,22 +89,30 @@ struct Input {
   uint32_t refreshDurationMs = 0;
 };
 
+struct PreparedWord;
+
 struct Frame {
   uint32_t id = 0;
   uint32_t requestedAtMs = 0;
   const char* text = nullptr;
   uint16_t textLength = 0;
   ResumeAnchor anchor;
+  const PreparedWord* preparedWord = nullptr;
 };
 
 struct Decision {
   State state = State::Empty;
   Error error = Error::None;
+  PauseReason pauseReason = PauseReason::None;
   bool render = false;
   bool switchToPaged = false;
+  bool pagedModeAvailable = false;
+  bool cleanupRefresh = false;
   bool presentationAccepted = false;
   uint32_t presentedAtMs = 0;
   uint32_t refreshDurationMs = 0;
+  uint32_t nextDeadlineMs = 0;
+  uint16_t paceWpm = 100;
   Frame frame;
 };
 

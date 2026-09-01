@@ -27,8 +27,8 @@ void copyToField(char* dest, const char* src, const size_t maxLen) {
   dest[maxLen - 1] = '\0';
 }
 
-uint8_t normalizeSteppedValue(const uint8_t value, const uint8_t minValue, const uint8_t maxValue,
-                              const uint8_t step, const uint8_t fallback) {
+uint8_t normalizeSteppedValue(const uint8_t value, const uint8_t minValue, const uint8_t maxValue, const uint8_t step,
+                              const uint8_t fallback) {
   if (value < minValue || value > maxValue || step == 0 || (value - minValue) % step != 0) return fallback;
   return value;
 }
@@ -375,10 +375,12 @@ void CrossPointSettings::clearSdFontFamily() {
   saveToFile();
 }
 
-int CrossPointSettings::getReaderFontId() const {
+int CrossPointSettings::getReaderFontId() const { return getReaderFontIdAtSize(fontPointSize); }
+
+int CrossPointSettings::getReaderFontIdAtSize(const uint8_t pointSize) const {
   // Check SD card font first
   if (sdFontFamilyName[0] != '\0' && sdFontIdResolver) {
-    int id = sdFontIdResolver(sdFontResolverCtx, sdFontFamilyName, fontPointSize);
+    int id = sdFontIdResolver(sdFontResolverCtx, sdFontFamilyName, pointSize);
     if (id != 0) return id;
     // Fall through to built-in if SD font not found
   }
@@ -388,7 +390,7 @@ int CrossPointSettings::getReaderFontId() const {
   // normally persists the snap; snap again here (without allocating — this runs
   // in the page render loop) so rendering is correct even before it has run.
   const uint8_t pt =
-      snapToNearestPointSize(BUILTIN_READER_POINT_SIZES, std::size(BUILTIN_READER_POINT_SIZES), fontPointSize);
+      snapToNearestPointSize(BUILTIN_READER_POINT_SIZES, std::size(BUILTIN_READER_POINT_SIZES), pointSize);
   const bool sans = (fontFamily == NOTOSANS);
   switch (pt) {
     case 12:

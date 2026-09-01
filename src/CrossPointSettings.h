@@ -199,11 +199,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   // RSVP ORP guide presentation. The numeric values are persisted in
   // settings.json; append new styles rather than reordering these values.
-  enum RSVP_GUIDE_STYLE {
-    RSVP_GUIDES_OFF = 0,
-    RSVP_GUIDES_ON = 1,
-    RSVP_GUIDE_STYLE_COUNT
-  };
+  enum RSVP_GUIDE_STYLE { RSVP_GUIDES_OFF = 0, RSVP_GUIDES_ON = 1, RSVP_GUIDE_STYLE_COUNT };
 
   static constexpr uint8_t RSVP_PACE_MIN_WPM = 60;
   static constexpr uint8_t RSVP_PACE_MAX_WPM = 120;
@@ -373,6 +369,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     return (shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP) ? 10 : 400;
   }
   int getReaderFontId() const;
+  int getReaderFontIdAtSize(uint8_t pointSize) const;
 
   // Drop the SD font selection and fall back to the built-in family. The reader
   // point size comes back into BUILTIN_READER_POINT_SIZES with it, since that is
