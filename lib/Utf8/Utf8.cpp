@@ -21,6 +21,85 @@ uint32_t utf8ComposePair(const uint32_t base, const uint32_t mark) {
   }
   return 0;
 }
+
+uint32_t utf8DecodeBounded(const char* input, const size_t length,
+                           size_t& offset) {
+  if (offset >= length) return 0;
+  const auto* bytes = reinterpret_cast<const unsigned char*>(input);
+  const unsigned char lead = bytes[offset];
+  int expected = 1;
+  if (lead < 0x80) {
+    offset++;
+    return lead;
+  } else if ((lead >> 5) == 0x6) {
+    expected = 2;
+  } else if ((lead >> 4) == 0xE) {
+    expected = 3;
+  } else if ((lead >> 3) == 0x1E) {
+    expected = 4;
+  } else {
+    offset++;
+    return REPLACEMENT_GLYPH;
+  }
+
+  if (offset + static_cast<size_t>(expected) > length) {
+    offset++;
+    return REPLACEMENT_GLYPH;
+  }
+  for (int index = 1; index < expected; ++index) {
+    if ((bytes[offset + static_cast<size_t>(index)] & 0xC0) != 0x80) {
+      offset++;
+      return REPLACEMENT_GLYPH;
+    }
+  }
+
+  uint32_t codepoint = lead & ((1 << (7 - expected)) - 1);
+  for (int index = 1; index < expected; ++index) {
+    codepoint = (codepoint << 6) |
+                (bytes[offset + static_cast<size_t>(index)] & 0x3F);
+  }
+  const bool overlong = (expected == 2 && codepoint < 0x80) ||
+                        (expected == 3 && codepoint < 0x800) ||
+                        (expected == 4 && codepoint < 0x10000);
+  const bool surrogate = codepoint >= 0xD800 && codepoint <= 0xDFFF;
+  if (overlong || surrogate || codepoint > 0x10FFFF) {
+    offset++;
+    return REPLACEMENT_GLYPH;
+  }
+  offset += static_cast<size_t>(expected);
+  return codepoint;
+}
+
+bool utf8AppendCodepointToBuffer(const uint32_t codepoint, char* output,
+                                 const size_t capacity, size_t& length) {
+  unsigned char encoded[4];
+  size_t encodedLength = 0;
+  if (codepoint < 0x80) {
+    encoded[0] = static_cast<unsigned char>(codepoint);
+    encodedLength = 1;
+  } else if (codepoint < 0x800) {
+    encoded[0] = static_cast<unsigned char>(0xC0 | (codepoint >> 6));
+    encoded[1] = static_cast<unsigned char>(0x80 | (codepoint & 0x3F));
+    encodedLength = 2;
+  } else if (codepoint < 0x10000) {
+    encoded[0] = static_cast<unsigned char>(0xE0 | (codepoint >> 12));
+    encoded[1] = static_cast<unsigned char>(0x80 | ((codepoint >> 6) & 0x3F));
+    encoded[2] = static_cast<unsigned char>(0x80 | (codepoint & 0x3F));
+    encodedLength = 3;
+  } else {
+    encoded[0] = static_cast<unsigned char>(0xF0 | (codepoint >> 18));
+    encoded[1] = static_cast<unsigned char>(0x80 | ((codepoint >> 12) & 0x3F));
+    encoded[2] = static_cast<unsigned char>(0x80 | ((codepoint >> 6) & 0x3F));
+    encoded[3] = static_cast<unsigned char>(0x80 | (codepoint & 0x3F));
+    encodedLength = 4;
+  }
+  if (length + encodedLength >= capacity) return false;
+  for (size_t index = 0; index < encodedLength; ++index) {
+    output[length + index] = static_cast<char>(encoded[index]);
+  }
+  length += encodedLength;
+  return true;
+}
 }  // namespace
 
 std::string utf8ComposeNfc(const std::string& in) {
@@ -66,6 +145,62 @@ std::string utf8ComposeNfc(const std::string& in) {
   }
   if (haveBase) utf8AppendCodepoint(base, out);
   return out;
+}
+
+bool utf8ComposeNfcToBuffer(const char* in, const size_t inLength, char* out,
+                            const size_t outCapacity, size_t& outLength,
+                            const bool removeSoftHyphen) {
+  outLength = 0;
+  if (out == nullptr || (in == nullptr && inLength != 0) || outCapacity == 0) {
+    return false;
+  }
+  out[0] = '\0';
+
+  uint32_t base = 0;
+  bool haveBase = false;
+  size_t offset = 0;
+  while (offset < inLength) {
+    const uint32_t codepoint = utf8DecodeBounded(in, inLength, offset);
+    if (removeSoftHyphen && codepoint == 0x00AD) continue;
+    if (utf8IsCombiningMark(codepoint)) {
+      const uint32_t composed = haveBase ? utf8ComposePair(base, codepoint) : 0;
+      if (composed != 0) {
+        base = composed;
+        continue;
+      }
+      if (haveBase &&
+          !utf8AppendCodepointToBuffer(base, out, outCapacity, outLength)) {
+        outLength = 0;
+        out[0] = '\0';
+        return false;
+      }
+      haveBase = false;
+      if (!utf8AppendCodepointToBuffer(codepoint, out, outCapacity,
+                                       outLength)) {
+        outLength = 0;
+        out[0] = '\0';
+        return false;
+      }
+      continue;
+    }
+
+    if (haveBase &&
+        !utf8AppendCodepointToBuffer(base, out, outCapacity, outLength)) {
+      outLength = 0;
+      out[0] = '\0';
+      return false;
+    }
+    base = codepoint;
+    haveBase = true;
+  }
+  if (haveBase &&
+      !utf8AppendCodepointToBuffer(base, out, outCapacity, outLength)) {
+    outLength = 0;
+    out[0] = '\0';
+    return false;
+  }
+  out[outLength] = '\0';
+  return true;
 }
 
 int utf8CodepointLen(const unsigned char c) {

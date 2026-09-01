@@ -1,10 +1,14 @@
 add_executable(RsvpTest
   RsvpTest.cpp
+  RsvpLexicalCoreTest.cpp
   ${REPO_ROOT}/lib/Rsvp/EpubVisibleTextSource.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpRefreshStats.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpSession.cpp
+  ${REPO_ROOT}/lib/Rsvp/RsvpLexicalCore.cpp
+  ${REPO_ROOT}/lib/Rsvp/RsvpWordLayout.cpp
   ${REPO_ROOT}/lib/Rsvp/VisibleContentStream.cpp
   ${REPO_ROOT}/lib/Epub/Epub/htmlEntities.cpp
+  ${REPO_ROOT}/lib/Utf8/Utf8.cpp
 )
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
