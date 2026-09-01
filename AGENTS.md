@@ -888,16 +888,17 @@ build_flags =
 **AI agent scope** (what you CAN verify):
 
 1. ✅ **Build**: Build once after the last code edit with the relevant `pio run` target. Do not clean by default, repeat a target that already passed, or rebuild after formatting/comment-only/documentation-only changes.
-2. ✅ **Quality**: `pio check` when relevant + `./bin/clang-format-fix -g`
-3. ✅ **Format**: Commit messages (`feat:`/`fix:`), no `.gitignore`-excluded files staged (e.g., `*.generated.h`, `.pio/`, `platformio.local.ini`)
-4. ✅ **CI**: Fix GitHub Actions failures before review
-5. ✅ **Code review**: Ensure orientation-aware logic is correct in all 4 modes by inspecting switch/case coverage
+2. ✅ **Simulator**: After the last relevant code edit, build and exercise the affected user-visible flow with [CrossPoint Simulator](https://github.com/crosspoint-reader/crosspoint-simulator) using `pio run -e simulator -t run_simulator` or the matching device-profile environment. Prefer deterministic input scripts and screenshots when practical. Do not rerun after formatting/comment-only/documentation-only changes. If the simulator cannot cover hardware-only behavior, record the exact limitation and flag the required device check instead of silently skipping verification.
+3. ✅ **Quality**: `pio check` when relevant + `./bin/clang-format-fix -g`
+4. ✅ **Format**: Commit messages (`feat:`/`fix:`), no `.gitignore`-excluded files staged (e.g., `*.generated.h`, `.pio/`, `platformio.local.ini`)
+5. ✅ **CI**: Fix GitHub Actions failures before review
+6. ✅ **Code review**: Ensure orientation-aware logic is correct in all 4 modes by inspecting switch/case coverage
 
 **Human tester scope** (flag these for the user):
-6. 🔲 **Device**: Test on hardware
-7. 🔲 **Orientations**: Verify all 4 modes (Portrait/Inverted/Landscape CW/CCW)
-8. 🔲 **Heap**: `ESP.getFreeHeap()` > 50KB, no leaks
-9. 🔲 **Cache**: If EPUB modified, delete `.crosspoint/` and verify re-parse
+7. 🔲 **Device**: Test on hardware
+8. 🔲 **Orientations**: Verify all 4 modes (Portrait/Inverted/Landscape CW/CCW)
+9. 🔲 **Heap**: `ESP.getFreeHeap()` > 50KB, no leaks
+10. 🔲 **Cache**: If EPUB modified, delete `.crosspoint/` and verify re-parse
 
 ### CI/CD Pipeline Awareness
 
