@@ -14,10 +14,10 @@ are also outside this candidate's scope.
 - Embedded version: `0.1.0-crossrsvp-experimental-x3`
 - Firmware: `artifacts/rsvp-x3-v0.1/firmware/crossrsvp-x3-v0.1-experimental.bin` (local, ignored build artifact)
 - Published pre-release: [crossRSVP X3 v0.1 (experimental)](https://github.com/deman4ik/crossRSVP/releases/tag/v0.1.0-crossrsvp-x3)
-- Size: 5,424,960 bytes
-- SHA-256: `9f9b31de00d43a3b69e00aa1f5325b1e251dc364b945837f695584406eb42279`
+- Size: 5,425,152 bytes
+- SHA-256: `c4d3fe981bb5fb9e5e5bb42e200e536d22bae14ee9ac7d9bae235acae05c20eb`
 - Static RAM estimate: 56,260 / 327,680 bytes (17.2%)
-- Flash image usage: 5,411,253 / 6,553,600 bytes (82.6%)
+- Flash image usage: 5,411,435 / 6,553,600 bytes (82.6%)
 
 Reproduce and package the build with:
 
@@ -39,7 +39,7 @@ WebSocket/RainMaker code.
 
 | Gate | Result |
 | --- | --- |
-| Host GoogleTest suite | 236/236 passed |
+| Host GoogleTest suite | 238/238 passed |
 | Repository C/C++ formatting wrapper | Passed |
 | PlatformIO static analysis, low through high | Passed, no defects |
 | Production X3 build | Passed |
@@ -62,7 +62,9 @@ repeated runs.
 | Active playback advances in source order | [Playing](screenshots/flow-portrait-playing.png) | Passed |
 | Back returns to Paged Mode and highlights the last word | [Paged highlight](screenshots/flow-portrait-paged-highlight.png) | Passed |
 | Re-entry repeats the last RSVP word | [RSVP again](screenshots/flow-portrait-rsvp-again.png) | Passed |
-| Unsupported image pauses with a Paged Mode prompt | [Image boundary](screenshots/boundary-image.png) | Passed |
+| Unsupported image pauses with explicit skip/Paged choices | [Image boundary](screenshots/boundary-image.png) | Passed |
+| PageForward skips one image and shows the next word paused | [After image skip](screenshots/boundary-image-skipped.png) | Passed |
+| Configured long-Confirm enters RSVP directly and paused | [Quick entry](screenshots/quick-entry-paused.png) | Passed |
 | New chapter pauses before its first word | [Chapter boundary](screenshots/boundary-chapter.png) | Passed |
 | Injected source-open failure falls back to Paged Mode | [Fatal fallback](screenshots/fatal-fallback-paged.png) | Passed |
 | All four X3 orientations render a paused RSVP frame | [0](screenshots/orientation-0-paused.png), [1](screenshots/orientation-1-paused.png), [2](screenshots/orientation-2-paused.png), [3](screenshots/orientation-3-paused.png) | Passed |
@@ -74,10 +76,10 @@ production builds.
 
 | Stories from issue #1 | Current evidence | Physical X3 follow-up |
 | --- | --- | --- |
-| 1–12: entry, exclusivity, controls, pace | Host controller/activity tests and paused/playing/mode-switch simulator flow | Verify every mapped button and the 60–120 WPM selector |
+| 1–12: entry, exclusivity, controls, pace | Host controller/activity tests plus menu and quick-entry simulator flows | Verify every mapped button and the 60–120 WPM selector |
 | 13–14: refresh-aware pacing and safe cap | Fake-clock host tests prove deadline accounting and no token skipping | Measure real frame intervals; ordinary intervals must stay within 10% |
 | 15–27: ORP, Russian Unicode, punctuation, hyphens, fitting | Host Unicode/rendering tests plus Russian simulator frames | Inspect `ё`, `й`, dialogue punctuation, smallest font, and unrenderable long-word prompt |
-| 28–34: page/chapter/content boundaries and mode position | Host mode/source tests plus chapter, image, highlight, and repeat simulator evidence | Exercise a page turn between modes and confirm the displayed-page restart rule |
+| 28–34: page/chapter/content boundaries and mode position | Host mode/source tests plus chapter, image skip, highlight, and repeat simulator evidence | Exercise a page turn between modes and confirm the displayed-page restart rule |
 | 35–39: checkpoints, revision, recovery, progress, statistics | Host storage/session tests cover every checkpoint trigger, corruption, revision invalidation, and progress/statistics decisions | Verify sleep/resume, SD writes, native progress, and statistics on device |
 | 40–43: localization, orientations, cleanup, fatal fallback | Host localization/fallback tests and simulator orientation/fatal scenarios | Assess panel ghosting, cleanup cadence, low-memory behavior, and readable error rendering |
 | 44: diagnostics | Bounded timing, heap, checkpoint, and word-order logging is implemented | Capture real serial logs for the 30-minute run |
@@ -96,8 +98,8 @@ hash above:
   punctuation, paragraph, boundary, and cleanup pauses.
 - Record fast-refresh and cleanup distributions. Free heap must remain above 50 KB with no declining trend.
 - Confirm ghosting stays readable and cleanup never consumes or skips a word.
-- Verify menu entry, long-Confirm mapping, play/pause, rewind five, step one, pace changes, Back, long-Back, and mutual
-  exclusion with Paged Mode.
+- Verify menu entry, long-Confirm mapping, play/pause, rewind five, step one, explicit non-text skip, pace changes, Back,
+  long-Back, and mutual exclusion with Paged Mode. Use the [Russian button guide](../../rsvp-controls-ru.md).
 - Verify mode switching both without and after a Paged page turn, including highlight, repeat, and displayed-page restart.
 - Verify checkpoint saves at 30 seconds, pause, mode switch, chapter transition, sleep, and exit.
 - Verify sleep/resume, changed Book Revision, corrupted checkpoint, native progress, and reading-time statistics.

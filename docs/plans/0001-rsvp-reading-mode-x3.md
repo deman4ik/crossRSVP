@@ -71,7 +71,7 @@ The host test drives this seam with a small real EPUB fixture, fake time, record
 - Consume logical commands: play/pause, rewind five, step one, pace ±10, Mode Switch, and exit.
 - Never skip tokens to recover timing. Refresh duration consumes the base interval; linguistic pauses extend it.
 - Request checkpoint writes on the approved events and at the 30-second debounce boundary.
-- Produce explicit pause/fallback reasons for chapter, image/table, oversized word, corruption, and fatal load failure.
+- Produce explicit pause/fallback reasons for chapter, image/table, oversized word, corruption, and fatal load failure. PageForward may consume one recoverable non-text boundary and expose the next word paused; oversized words remain Paged-only.
 
 ### RSVP renderer
 
@@ -86,7 +86,7 @@ The host test drives this seam with a small real EPUB fixture, fake time, record
 
 - Route EPUB creation to Paged or RSVP through the reader factory using explicit launch intent, not a global boolean that can produce contradictory state.
 - Add a menu Mode Switch and append an RSVP value to long-Confirm configuration without shifting persisted enum values.
-- Keep short Confirm as play/pause, PageBack as five-word rewind, PageForward as paused single-step, Left/Right as pace control, Back as Paged fallback, and long-Back as existing Home/File Browser navigation.
+- Keep short Confirm as play/pause, PageBack as five-word rewind, PageForward as paused single-step or an explicit one-element non-text skip, Left/Right as pace control, Back as Paged fallback, and long-Back as existing Home/File Browser navigation.
 - Enter RSVP paused and always open a newly selected book in Paged Mode.
 - On RSVP → Paged, resolve the anchor to a page and request a one-shot word highlight.
 - On Paged → RSVP, repeat the last RSVP token when no page turn occurred; otherwise start from the displayed page's first visible offset.
@@ -123,7 +123,7 @@ The tracker work is intentionally compressed into four large vertical slices. Fo
 ### Simulator
 
 - Open the RSVP tracer fixture in all four orientations.
-- Capture paused word, playing word, boundary prompt, fatal fallback, and Paged highlight states.
+- Capture paused word, playing word, boundary prompt, post-skip word, quick long-Confirm entry, fatal fallback, and Paged highlight states.
 - Verify logical button actions and no flash of Paged content while RSVP is active.
 
 ### Xteink X3

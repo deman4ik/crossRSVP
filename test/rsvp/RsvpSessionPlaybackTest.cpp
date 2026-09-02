@@ -216,6 +216,55 @@ TEST(RsvpSessionPlayback, UnsupportedElementsOfferPagedFallbackWithReason) {
   EXPECT_FALSE(decision.switchToPaged);
 }
 
+TEST(RsvpSessionPlayback, PageForwardSkipsEachNonTextBoundaryAndShowsTheNextWordPaused) {
+  constexpr rsvp::NonTextKind kinds[] = {rsvp::NonTextKind::Image, rsvp::NonTextKind::Table,
+                                         rsvp::NonTextKind::HorizontalRule, rsvp::NonTextKind::Other};
+  for (const auto kind : kinds) {
+    SCOPED_TRACE(static_cast<int>(kind));
+    auto nonText = marker(rsvp::EventKind::NonText);
+    nonText.nonText = kind;
+    VectorSource source({word("one", 0), nonText, word("two", 4), marker(rsvp::EventKind::EndOfBook)});
+    rsvp::RsvpSession session(source);
+
+    const auto first = session.step({});
+    acknowledge(session, first, 0);
+    session.step({.action = rsvp::Action::TogglePlayback});
+    const auto boundary = session.step({.nowMs = 600});
+    ASSERT_EQ(boundary.state, rsvp::State::Boundary);
+
+    const auto next = session.step({.nowMs = 600, .action = rsvp::Action::StepForward});
+    EXPECT_EQ(frameText(next), "two");
+    EXPECT_EQ(next.state, rsvp::State::Paused);
+    EXPECT_EQ(next.pauseReason, rsvp::PauseReason::None);
+    EXPECT_FALSE(next.pagedModeAvailable);
+    EXPECT_TRUE(next.checkpointRequested);
+  }
+}
+
+TEST(RsvpSessionPlayback, PageForwardSkipsOneConsecutiveNonTextBoundaryPerPress) {
+  auto image = marker(rsvp::EventKind::NonText);
+  image.nonText = rsvp::NonTextKind::Image;
+  auto table = marker(rsvp::EventKind::NonText);
+  table.nonText = rsvp::NonTextKind::Table;
+  VectorSource source({word("one", 0), image, table, word("two", 4), marker(rsvp::EventKind::EndOfBook)});
+  rsvp::RsvpSession session(source);
+
+  const auto first = session.step({});
+  acknowledge(session, first, 0);
+  session.step({.action = rsvp::Action::TogglePlayback});
+  ASSERT_EQ(session.step({.nowMs = 600}).pauseReason, rsvp::PauseReason::Image);
+
+  const auto tableBoundary = session.step({.nowMs = 600, .action = rsvp::Action::StepForward});
+  EXPECT_FALSE(tableBoundary.render);
+  EXPECT_EQ(tableBoundary.state, rsvp::State::Boundary);
+  EXPECT_EQ(tableBoundary.pauseReason, rsvp::PauseReason::Table);
+  EXPECT_EQ(tableBoundary.nextDeadlineMs, 0u);
+
+  const auto next = session.step({.nowMs = 600, .action = rsvp::Action::StepForward});
+  EXPECT_EQ(frameText(next), "two");
+  EXPECT_EQ(next.state, rsvp::State::Paused);
+}
+
 TEST(RsvpSessionPlayback, FrameCarriesNormalizedUnicodeOrpPreparation) {
   constexpr char rawWord[] = "\xD0\xB5\xCC\x88-\xD0\xBA\xD0\xBE\xD1\x82";
   VectorSource source({word(rawWord, 0), marker(rsvp::EventKind::EndOfBook)});
@@ -245,6 +294,10 @@ TEST(RsvpSessionPlayback, PixelOverflowPausesWithPagedModeAvailable) {
   EXPECT_EQ(boundary.pauseReason, rsvp::PauseReason::OversizedWord);
   EXPECT_TRUE(boundary.pagedModeAvailable);
   EXPECT_FALSE(boundary.switchToPaged);
+  const auto ignoredStep = session.step({.action = rsvp::Action::StepForward});
+  EXPECT_FALSE(ignoredStep.render);
+  EXPECT_EQ(ignoredStep.state, rsvp::State::Boundary);
+  EXPECT_EQ(ignoredStep.pauseReason, rsvp::PauseReason::OversizedWord);
   EXPECT_TRUE(session.step({.action = rsvp::Action::ModeSwitch}).switchToPaged);
 }
 

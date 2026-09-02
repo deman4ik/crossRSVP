@@ -6,7 +6,7 @@ status: accepted
 
 RSVP Mode will traverse EPUB content in source order with a semantic cursor capable of identifying words and non-text Document Elements. It will maintain a versioned RSVP Checkpoint separate from CrossPoint's native page progress, then reconcile both through the Resume Anchor during a Mode Switch. A page-only cursor was rejected because pagination changes with layout and cannot reliably identify a word, while a flat word list would silently lose images, tables, and structural boundaries.
 
-The checkpoint is written atomically every 30 seconds and on pause, Mode Switch, chapter transition, sleep, and exit. Page boundaries do not interrupt playback; chapter boundaries pause before their first word. Images, tables, and other unsupported non-text elements pause playback and offer a transition to Paged Mode rather than being silently skipped.
+The checkpoint is written atomically every 30 seconds and on pause, Mode Switch, chapter transition, sleep, and exit. Page boundaries do not interrupt playback; chapter boundaries pause before their first word. Images, tables, horizontal rules, and other unsupported non-text elements pause playback. The reader can switch to Paged Mode for context or explicitly press PageForward to skip one element and expose the next word on pause; playback never skips these elements automatically.
 
 Words split only by layout or discretionary hyphenation are reconstructed. Internal hyphens remain in the Lexical Core, while surrounding punctuation and em dashes remain visible but do not affect ORP selection. Oversized words shrink to a configured minimum and otherwise pause with a Paged Mode fallback.
 

@@ -17,6 +17,11 @@ bool isClosingCodepoint(const uint32_t codepoint) {
          codepoint == 0x300D || codepoint == 0x300F;
 }
 
+bool isSkippableNonTextBoundary(const PauseReason reason) {
+  return reason == PauseReason::Image || reason == PauseReason::Table || reason == PauseReason::HorizontalRule ||
+         reason == PauseReason::OtherContent;
+}
+
 uint32_t nextCodepoint(const char* text, const uint16_t length, uint16_t& offset) {
   const uint8_t first = static_cast<uint8_t>(text[offset]);
   uint32_t codepoint = first;
@@ -358,7 +363,15 @@ Decision RsvpSession::step(const Input& input) {
       }
       break;
     case Action::StepForward:
-      if (state == State::Paused && !framePresented) {
+      if (state == State::Boundary && isSkippableNonTextBoundary(fallbackReason)) {
+        lookaheadValid = false;
+        fallbackReason = PauseReason::None;
+        framePresented = false;
+        nextDeadlineMs = 0;
+        state = State::Paused;
+        emitNextWord(input.nowMs, decision);
+        checkpointRequestedThisStep = true;
+      } else if (state == State::Paused && !framePresented) {
         if (chapterPauseShown) chapterPauseShown = false;
         chapterPending = false;
         emitNextWord(input.nowMs, decision);

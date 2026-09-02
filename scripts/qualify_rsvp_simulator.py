@@ -30,6 +30,7 @@ class Scenario:
     screenshots: dict[int, str]
     fatal_load: bool = False
     fixture_name: str = "default"
+    quick_rsvp: bool = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,7 +63,7 @@ def build_fixture(destination: Path) -> None:
     )
 
 
-def write_simulator_state(run_root: Path, fixture: Path, orientation: int) -> None:
+def write_simulator_state(run_root: Path, fixture: Path, orientation: int, quick_rsvp: bool) -> None:
     fs_root = run_root / "fs_"
     books = fs_root / "books"
     crosspoint = fs_root / ".crosspoint"
@@ -81,6 +82,8 @@ def write_simulator_state(run_root: Path, fixture: Path, orientation: int) -> No
         "screenInverted": 1,
         "uiTheme": 1,
     }
+    if quick_rsvp:
+        settings["longPressMenuFunction"] = 5
     state = {
         "lastSleepFromReader": True,
         "openEpubPath": "/books/rsvp-russian-qualification.epub",
@@ -117,6 +120,11 @@ def bmp_dimensions(path: Path) -> tuple[int, int]:
     return struct.unpack_from("<ii", header, 18)
 
 
+def activity_entry_count(output: str, activity: str) -> int:
+    marker = f"Entering activity: {activity}"
+    return sum(line.endswith(marker) for line in output.splitlines())
+
+
 def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenario: Scenario) -> None:
     log_path = output / f"{scenario.name}.log"
     log_path.unlink(missing_ok=True)
@@ -125,7 +133,7 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
 
     with tempfile.TemporaryDirectory(prefix=f"crossrsvp-{scenario.name}-") as temp:
         run_root = Path(temp)
-        write_simulator_state(run_root, fixtures[scenario.fixture_name], scenario.orientation)
+        write_simulator_state(run_root, fixtures[scenario.fixture_name], scenario.orientation, scenario.quick_rsvp)
         env = os.environ.copy()
         env["CROSSPOINT_SIM_INPUT_SCRIPT"] = scenario.input_script
         env["CROSSPOINT_SIM_SCREENSHOTS"] = screenshot_schedule(output, scenario.screenshots)
@@ -149,11 +157,11 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
             raise RuntimeError(f"{scenario.name}: simulator exited {completed.returncode}; see {log_path}")
         if "Hardware detect: X3" not in completed.stdout:
             raise RuntimeError(f"{scenario.name}: X3 profile was not detected")
-        if "Entering activity: RsvpReader" not in completed.stdout:
+        if activity_entry_count(completed.stdout, "RsvpReader") == 0:
             raise RuntimeError(f"{scenario.name}: RSVP activity was not entered")
         if scenario.fatal_load:
             required = "Injected simulator RSVP source-open failure"
-            if required not in completed.stdout or completed.stdout.count("Entering activity: EpubReader") < 2:
+            if required not in completed.stdout or activity_entry_count(completed.stdout, "EpubReader") < 2:
                 raise RuntimeError(f"{scenario.name}: fatal fallback was not observed")
         allowed_errors = {"[ERR] [EBP] Warning: Could not parse any TOC format"}
         if scenario.fatal_load:
@@ -164,12 +172,20 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
         if unexpected_errors:
             raise RuntimeError(f"{scenario.name}: unexpected error: {unexpected_errors[0]}; see {log_path}")
         if scenario.name == "flow-portrait":
-            if completed.stdout.count("Entering activity: RsvpReader") != 2:
+            if activity_entry_count(completed.stdout, "RsvpReader") != 2:
                 raise RuntimeError(f"{scenario.name}: RSVP re-entry was not observed")
-            if completed.stdout.count("Entering activity: EpubReader") < 2:
+            if activity_entry_count(completed.stdout, "EpubReader") < 2:
                 raise RuntimeError(f"{scenario.name}: Paged fallback was not observed")
             if completed.stdout.count("[RSVP] refresh=fast") < 6:
                 raise RuntimeError(f"{scenario.name}: playback did not produce the expected frames")
+        if scenario.name == "boundary-image":
+            if activity_entry_count(completed.stdout, "EpubReader") != 1:
+                raise RuntimeError(f"{scenario.name}: PageForward unexpectedly entered Paged Mode")
+        if scenario.name == "quick-entry":
+            if activity_entry_count(completed.stdout, "RsvpReader") != 1:
+                raise RuntimeError(f"{scenario.name}: long-Confirm did not enter RSVP exactly once")
+            if activity_entry_count(completed.stdout, "EpubReaderMenu") != 0:
+                raise RuntimeError(f"{scenario.name}: long-Confirm opened the reader menu")
         expected_pause = {
             "boundary-image": "pause=image",
             "boundary-chapter": "pause=chapter",
@@ -215,6 +231,13 @@ def validate_orientation_screenshots(output: Path) -> None:
         raise RuntimeError("opposite X3 orientations produced identical frames")
 
 
+def validate_boundary_skip_screenshots(output: Path) -> None:
+    boundary = output / "boundary-image.bmp"
+    skipped = output / "boundary-image-skipped.bmp"
+    if filecmp.cmp(boundary, skipped, shallow=False):
+        raise RuntimeError("boundary-image: PageForward did not replace the boundary prompt with the next word")
+
+
 def scenarios() -> list[Scenario]:
     enter_rsvp = "1200:ENTER;2200:DOWN;2600:DOWN;3000:DOWN;3400:ENTER"
     return [
@@ -236,8 +259,15 @@ def scenarios() -> list[Scenario]:
         Scenario(
             name="boundary-image",
             orientation=0,
-            input_script=f"{enter_rsvp};4600:ENTER;14000:QUIT",
-            screenshots={13000: "boundary-image.bmp"},
+            input_script=f"{enter_rsvp};4600:ENTER;12000:DOWN;14000:QUIT",
+            screenshots={11200: "boundary-image.bmp", 13000: "boundary-image-skipped.bmp"},
+        ),
+        Scenario(
+            name="quick-entry",
+            orientation=0,
+            input_script="1200:ENTER:500;5000:QUIT",
+            screenshots={4000: "quick-entry-paused.bmp"},
+            quick_rsvp=True,
         ),
         Scenario(
             name="boundary-chapter",
@@ -303,6 +333,8 @@ def main() -> int:
             run_scenario(program, fixtures, output, scenario)
         if any(scenario.name == "flow-portrait" for scenario in selected):
             validate_flow_screenshots(output)
+        if any(scenario.name == "boundary-image" for scenario in selected):
+            validate_boundary_skip_screenshots(output)
         if {scenario.name for scenario in selected}.issuperset({f"orientation-{orientation}" for orientation in range(4)}):
             validate_orientation_screenshots(output)
 
