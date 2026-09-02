@@ -30,6 +30,8 @@ add_custom_command(
     fixture/META-INF/container.xml
     fixture/OEBPS/content.opf
     fixture/OEBPS/chapter.xhtml
+    fixture/OEBPS/chapter2.xhtml
+    fixture/OEBPS/test.png
   VERBATIM
 )
 add_custom_target(RsvpFixture DEPENDS "${RSVP_FIXTURE_EPUB}")

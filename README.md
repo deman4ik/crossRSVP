@@ -1,5 +1,12 @@
 # CrossPoint Reader
 
+> [!WARNING]
+> The crossRSVP v0.1 build in this fork is an **experimental release candidate qualified only for Xteink X3 / EPUB**.
+> It has passed host tests and deterministic X3 simulator scenarios, but it has not yet completed the physical X3
+> endurance, timing, heap, ghosting, battery, install, or rollback checks. Read the
+> [qualification report](docs/qualification/rsvp-x3-v0.1/README.md) and
+> [X3 installation and rollback guide](docs/rsvp-x3-v0.1-installation.md) before flashing it.
+
 [![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
 
 CrossPoint is open-source e-reader firmware - community-built, fully hackable, free forever. It's maintained by a growing community of developers and readers who believe your device should do what you want - not what a manufacturer decided for you.

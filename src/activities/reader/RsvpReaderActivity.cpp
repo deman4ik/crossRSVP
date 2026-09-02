@@ -8,6 +8,9 @@
 #include <RsvpModeSwitch.h>
 
 #include <algorithm>
+#if defined(SIMULATOR)
+#include <cstdlib>
+#endif
 #include <cstring>
 #include <optional>
 
@@ -18,13 +21,44 @@
 #include "ReaderUtils.h"
 #include "RsvpCheckpointFile.h"
 #include "activities/ActivityManager.h"
+#include "components/UITheme.h"
 #include "fontIds.h"
 
 namespace {
 rsvp::RsvpRefreshStats refreshStats;
+
+const char* pauseReasonName(const rsvp::PauseReason reason) {
+  switch (reason) {
+    case rsvp::PauseReason::Chapter:
+      return "chapter";
+    case rsvp::PauseReason::Image:
+      return "image";
+    case rsvp::PauseReason::Table:
+      return "table";
+    case rsvp::PauseReason::HorizontalRule:
+      return "horizontal-rule";
+    case rsvp::PauseReason::OtherContent:
+      return "other-content";
+    case rsvp::PauseReason::OversizedWord:
+      return "oversized-word";
+    case rsvp::PauseReason::Error:
+      return "error";
+    case rsvp::PauseReason::None:
+      return "none";
+  }
+  return "unknown";
 }
+}  // namespace
 
 bool RsvpReaderActivity::loadBook() {
+#if defined(SIMULATOR)
+  // Native qualification needs a deterministic way to exercise the complete
+  // error-screen-to-Paged fallback without corrupting a user's EPUB or cache.
+  if (std::getenv("CROSSPOINT_SIM_RSVP_FATAL_LOAD") != nullptr) {
+    LOG_ERR("RSVP", "Injected simulator RSVP source-open failure");
+    return enterFatalFallback(rsvp::Error::SourceOpen);
+  }
+#endif
   bool restoredFromCheckpoint = false;
   uint32_t restoredTokenHash32 = 0;
   uint16_t restoredTokenLength = 0;
@@ -341,7 +375,19 @@ void RsvpReaderActivity::renderBook() {
   renderer.clearScreen();
   const char* message = pauseMessage();
   if (message) {
-    renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() / 2, message, true, EpdFontFamily::BOLD);
+    LOG_INF("RSVP", "pause=%s", pauseReasonName(currentDecision.pauseReason));
+    int marginTop = 0;
+    int marginRight = 0;
+    int marginBottom = 0;
+    int marginLeft = 0;
+    renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
+    const int statusClearance = renderer.getLineHeight(SMALL_FONT_ID) + 36;
+    const Rect messageBounds(marginLeft + 16, marginTop + statusClearance,
+                             renderer.getScreenWidth() - marginLeft - marginRight - 32,
+                             renderer.getScreenHeight() - marginTop - marginBottom - statusClearance * 2);
+    // Boundary/error screens are infrequent; the wrapped helper may allocate
+    // line strings only when a translation exceeds the oriented safe width.
+    UITheme::drawCenteredWrappedText(renderer, messageBounds, UI_12_FONT_ID, message, 3, true, EpdFontFamily::BOLD);
   } else if (!currentDecision.frame.preparedWord || !drawPreparedWord(*currentDecision.frame.preparedWord)) {
     renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() / 2, tr(STR_RSVP_BOUNDARY_LONG_WORD), true,
                               EpdFontFamily::BOLD);

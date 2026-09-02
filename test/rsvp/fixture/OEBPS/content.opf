@@ -7,8 +7,11 @@
   </metadata>
   <manifest>
     <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="test-image" href="test.png" media-type="image/png"/>
   </manifest>
   <spine>
     <itemref idref="chapter"/>
+    <itemref idref="chapter2"/>
   </spine>
 </package>
