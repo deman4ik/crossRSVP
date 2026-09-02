@@ -48,6 +48,11 @@ const char* pauseReasonName(const rsvp::PauseReason reason) {
   }
   return "unknown";
 }
+
+bool isSkippableNonTextPause(const rsvp::PauseReason reason) {
+  return reason == rsvp::PauseReason::Image || reason == rsvp::PauseReason::Table ||
+         reason == rsvp::PauseReason::HorizontalRule || reason == rsvp::PauseReason::OtherContent;
+}
 }  // namespace
 
 bool RsvpReaderActivity::loadBook() {
@@ -365,8 +370,10 @@ void RsvpReaderActivity::drawStatus() const {
   const char* stateText = currentDecision.state == rsvp::State::Playing ? tr(STR_RSVP_PLAYING) : tr(STR_RSVP_PAUSED);
   snprintf(status, sizeof(status), "%s  %u", stateText, static_cast<unsigned>(currentDecision.paceWpm));
   renderer.drawCenteredText(SMALL_FONT_ID, 12, status);
+  const char* hint = isSkippableNonTextPause(currentDecision.pauseReason) ? tr(STR_RSVP_HINT_BOUNDARY_SKIP)
+                                                                          : tr(STR_RSVP_HINT_MODE_SWITCH);
   renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight() - renderer.getLineHeight(SMALL_FONT_ID) - 12,
-                            tr(STR_RSVP_HINT_MODE_SWITCH));
+                            hint);
 }
 
 void RsvpReaderActivity::renderBook() {

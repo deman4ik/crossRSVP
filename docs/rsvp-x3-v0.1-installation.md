@@ -9,8 +9,8 @@ candidate on X4, X4 Pro, X4C, Sticky, or another device.
 
 - File: `artifacts/rsvp-x3-v0.1/firmware/crossrsvp-x3-v0.1-experimental.bin`
 - Download: [experimental X3 pre-release](https://github.com/deman4ik/crossRSVP/releases/download/v0.1.0-crossrsvp-x3/crossrsvp-x3-v0.1-experimental.bin)
-- Size: 5,424,960 bytes
-- SHA-256: `9f9b31de00d43a3b69e00aa1f5325b1e251dc364b945837f695584406eb42279`
+- Size: 5,425,152 bytes
+- SHA-256: `c4d3fe981bb5fb9e5e5bb42e200e536d22bae14ee9ac7d9bae235acae05c20eb`
 - Embedded version: `0.1.0-crossrsvp-experimental-x3`
 
 Verify the file before copying or flashing it:
@@ -70,9 +70,14 @@ select X4. The normal upstream OTA updater follows upstream releases and will no
 
 1. Confirm the device boots normally and reports `0.1.0-crossrsvp-experimental-x3` in its version/log output.
 2. Open an EPUB. It must start in Paged Mode; RSVP must never start automatically.
-3. Enter **RSVP Reading Mode**, confirm the first word is visible while paused, then play and return to Paged Mode.
-4. Confirm the last RSVP word is highlighted and re-entering RSVP without a page turn repeats it.
-5. Stop and roll back if the reader resets, cannot return to Paged Mode, clips a word, or loses the reading position.
+3. Follow the [Russian RSVP button guide](rsvp-controls-ru.md): configure the long-Confirm shortcut, enter RSVP directly,
+   and confirm the first word is visible while paused.
+4. Check play/pause, pace changes, rewind five words, and single-word advance.
+5. At an image or table prompt, press **Next Page** once. RSVP must show the next word paused without entering Paged
+   Mode. Press **Back** separately to verify that Paged Mode remains available for viewing the skipped content.
+6. Confirm the last RSVP word is highlighted and re-entering RSVP without a page turn repeats it.
+7. Stop and roll back if the reader resets, cannot return to Paged Mode, clips or skips a word unexpectedly, or loses
+   the reading position.
 
 ## 4. Roll back
 
@@ -125,7 +130,7 @@ simulator-qualified only.
 | Heap | Above 50 KB with no declining trend | Pending |
 | Ghosting | Readable for the full run | Pending |
 | Battery | Start/end level and elapsed time recorded | Pending |
-| Controls and mode switching | All controls, highlight, repeat, and page-turn restart pass | Pending |
+| Controls and mode switching | All controls, quick entry, non-text skip, highlight, repeat, and page-turn restart pass | Pending |
 | Checkpoint triggers | 30 s, pause, switch, chapter, sleep, and exit pass | Pending |
 | Recovery data | Sleep, revision change, corrupt checkpoint, progress, and statistics pass | Pending |
 | Content/failure cases | Chapter, image/table, long word, and fatal fallback pass | Pending |

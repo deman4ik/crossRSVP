@@ -41,7 +41,7 @@ The v0.1 release is experimental. It uses the existing full-frame refresh path, 
 27. As a reader, I want playback to pause and offer Paged Mode when a word cannot fit at the minimum size, so that text is never clipped or silently altered.
 28. As a reader, I want page boundaries to pass without interruption, so that pagination does not affect RSVP flow.
 29. As a reader, I want playback paused at the beginning of a new chapter, so that semantic transitions are not missed.
-30. As a reader, I want playback paused before images, tables, and other unsupported non-text Document Elements, so that meaningful book content is not silently skipped.
+30. As a reader, I want playback paused before images, tables, and other unsupported non-text Document Elements, then choose either Paged Mode or an explicit one-element skip to the next word, so that meaningful book content is never silently skipped.
 31. As a reader, I want the page containing the last RSVP word opened and that word highlighted after switching to Paged Mode, so that I can immediately find the missed context.
 32. As a reader, I want a return to RSVP without a page turn to repeat the last RSVP word, so that the transition cannot skip text.
 33. As a reader, I want a return to RSVP after a page turn to start at the first word of the displayed page, so that the device makes a safe choice when it cannot know my eye position.
@@ -77,7 +77,7 @@ The v0.1 release is experimental. It uses the existing full-frame refresh path, 
 - Playback uses frame deadlines. Display refresh duration consumes the base interval; the scheduler waits only for the remaining time and never skips tokens to catch up.
 - Punctuation and structural pauses extend the base interval after the final significant Unicode punctuation, including punctuation followed by closing quotes or brackets.
 - The existing full-frame fast refresh path is used. Experimental partial/window refresh is out of scope. Cleanup cadence is calibrated on X3 and prefers paragraph boundaries.
-- Non-text content and unrenderable long words are first-class pause reasons. Recoverable cases offer a Mode Switch; fatal cases report an error and return to Paged Mode at the nearest safe Resume Anchor.
+- Non-text content and unrenderable long words are first-class pause reasons. Images, tables, horizontal rules, and other non-text elements offer both a Mode Switch and an explicit PageForward skip of one element; unrenderable words remain Paged-only. Fatal cases report an error and return to Paged Mode at the nearest safe Resume Anchor.
 - All user-visible strings use the existing i18n pipeline with Russian translations and English fallback.
 - Upstream integration is deferred until v0.1 is complete; later updates follow stable CrossPoint releases in explicit merge cycles.
 
@@ -88,7 +88,7 @@ The v0.1 release is experimental. It uses the existing full-frame refresh path, 
 - Source-stream tests cover visible offsets, paragraph/chapter boundaries, images/tables, soft hyphens, and bounded memory behavior using the existing host-side Google Test infrastructure.
 - Unicode/ORP tests cover Russian precomposed and decomposed letters, quotes/brackets, dashes, ellipses, NBSP variants, numbers, abbreviations, proportional glyph measurements, and oversized words.
 - Checkpoint tests cover atomic replacement, redundant-write suppression, corruption, version mismatch, Book Revision mismatch, and each required save event.
-- Mode Switch tests cover RSVP-to-Paged highlighting, no-page-turn repetition, page-turn restart, chapter boundaries, and failure fallback.
+- Mode Switch tests cover RSVP-to-Paged highlighting, no-page-turn repetition, page-turn restart, chapter boundaries, explicit non-text skips, and failure fallback.
 - Simulator checks cover every supported orientation and provide deterministic screenshots for paused RSVP and error/pause states.
 - X3 acceptance requires a 30-minute Russian EPUB run at 100 WPM with no lost/reordered words, crashes, or memory exhaustion; ordinary interval error stays within 10%, ghosting remains readable, Mode Switch preserves position, and sleep restores the checkpoint.
 - Heap monitoring must show more than 50 KB free with no growth trend during the hardware run. Battery consumption is measured and reported but does not block experimental v0.1.
