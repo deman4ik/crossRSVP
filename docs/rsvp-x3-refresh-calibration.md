@@ -1,6 +1,8 @@
 # X3 RSVP Refresh Calibration
 
-Status: instrumentation implemented; physical X3 capture required before enabling playback.
+Status: instrumentation implemented and playback enabled for the simulator-qualified experimental candidate; physical
+X3 capture is still required before hardware qualification. See the
+[v0.1 qualification report](qualification/rsvp-x3-v0.1/README.md).
 
 ## What the tracer records
 
@@ -26,10 +28,13 @@ The tracer also logs free heap with every sample. A declining heap trend invalid
 
 ## Playback budget gate
 
-The v0.1 target remains 100 WPM, which gives a 600 ms base interval. Playback must remain disabled until the physical X3 run shows:
+The v0.1 target remains 100 WPM, which gives a 600 ms base interval. The experimental candidate may be tested at that
+pace, but it must not be described as physically qualified until the X3 run shows:
 
 - fast-refresh p95 at or below 500 ms, leaving at least 100 ms scheduling margin at 100 WPM;
 - free heap above 50 KB with no declining trend;
 - cleanup refreshes excluded from the playing deadline and scheduled only at an explicit pause or structural boundary.
 
-The existing X3 HAL documents the cleanup path at approximately 1720 ms, so cleanup cannot be charged to a 600 ms playing frame. If fast p95 exceeds 500 ms, compute the initial safe cap as `floor(60000 / (p95 + 100))` WPM and round down to the nearest 10 WPM. Issue #2 therefore ships with a safe playback budget of **paused only**; issue #3 may enable 100 WPM only after the measurement gate is satisfied.
+The existing X3 HAL documents the cleanup path at approximately 1720 ms, so cleanup cannot be charged to a 600 ms
+playing frame. If fast p95 exceeds 500 ms, compute the initial safe cap as `floor(60000 / (p95 + 100))` WPM and round
+down to the nearest 10 WPM before promoting the candidate beyond experimental status.
