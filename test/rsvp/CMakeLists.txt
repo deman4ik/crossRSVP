@@ -5,6 +5,7 @@ add_executable(RsvpTest
   RsvpCheckpointFileTest.cpp
   RsvpSessionPlaybackTest.cpp
   RsvpModeSwitchTest.cpp
+  RsvpPendingActionsTest.cpp
   ${REPO_ROOT}/lib/Rsvp/EpubVisibleTextSource.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpModeSwitch.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpCheckpoint.cpp

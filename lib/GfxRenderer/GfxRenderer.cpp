@@ -11,6 +11,12 @@
 
 #include <algorithm>
 
+#if defined(SIMULATOR)
+#include <chrono>
+#include <cstdlib>
+#include <thread>
+#endif
+
 #include "FontCacheManager.h"
 
 namespace {
@@ -26,6 +32,20 @@ uint8_t resolveSdCardStyle(const SdCardFont& font, const EpdFontFamily::Style st
 
 namespace {
 const char* resolveVisualText(const char* text, std::string& visualBuffer, BidiUtils::BidiBaseDir baseDir);
+
+#if defined(SIMULATOR)
+uint32_t simulatorRefreshLatencyMs() {
+  static const uint32_t latencyMs = [] {
+    const char* value = std::getenv("CROSSPOINT_SIM_DISPLAY_REFRESH_MS");
+    if (value == nullptr || value[0] == '\0') return uint32_t{0};
+    char* end = nullptr;
+    const unsigned long parsed = std::strtoul(value, &end, 10);
+    if (end == value || *end != '\0') return uint32_t{0};
+    return static_cast<uint32_t>(std::min(parsed, 10000UL));
+  }();
+  return latencyMs;
+}
+#endif
 
 // Appends the shaped visual form of every RTL token in `text` to `shapedOut`.
 // getTextAdvanceX() measures the bidi-reordered, Arabic-shaped codepoint stream,
@@ -1683,6 +1703,10 @@ void GfxRenderer::displayBuffer(HalDisplay::RefreshMode refreshMode) const {
   auto elapsed = millis() - start_ms;
   LOG_DBG("GFX", "Time = %lu ms from clearScreen to displayBuffer", elapsed);
   refreshMode = applyPromotedRefresh(refreshMode);
+#if defined(SIMULATOR)
+  const uint32_t latencyMs = simulatorRefreshLatencyMs();
+  if (latencyMs != 0) std::this_thread::sleep_for(std::chrono::milliseconds(latencyMs));
+#endif
   display.displayBuffer(refreshMode, fadingFix);
 }
 

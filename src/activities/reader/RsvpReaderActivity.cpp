@@ -164,42 +164,58 @@ void RsvpReaderActivity::loop() {
     switchToPaged();
     return;
   }
-  if (checkpointRequestedFromRender.exchange(false)) {
-    RenderLock lock(*this);
-    if (!saveCheckpoint()) LOG_ERR("RSVP", "Failed to save deferred RSVP checkpoint");
-  }
   if (!session) {
     if (fatalFallbackPending.load(std::memory_order_acquire)) return;
     finish();
     return;
   }
 
-  rsvp::Action action = rsvp::Action::None;
   if (wordDoesNotFitPending.exchange(false)) {
-    action = rsvp::Action::WordDoesNotFit;
-  } else if (mappedInput.wasLongPressed(MappedInputManager::Button::Back, ReaderUtils::GO_BACK_OR_HOME_MS)) {
-    if (SETTINGS.backShortToFileBrowser)
-      onGoHome();
-    else
-      activityManager.goToFileBrowser(bookPath);
-    return;
-  } else if (mappedInput.wasReleased(MappedInputManager::Button::Back))
-    action = rsvp::Action::ModeSwitch;
-  else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm))
-    action = rsvp::Action::TogglePlayback;
-  else if (mappedInput.wasReleased(MappedInputManager::Button::Left))
-    action = rsvp::Action::PaceDown;
-  else if (mappedInput.wasReleased(MappedInputManager::Button::Right))
-    action = rsvp::Action::PaceUp;
-  else if (mappedInput.wasReleased(MappedInputManager::Button::PageBack))
-    action = rsvp::Action::RewindFive;
-  else if (mappedInput.wasReleased(MappedInputManager::Button::PageForward))
-    action = rsvp::Action::StepForward;
+    if (!pendingActions.push(rsvp::Action::WordDoesNotFit)) LOG_ERR("RSVP", "Pending action buffer full");
+  }
+  if (mappedInput.wasLongPressed(MappedInputManager::Button::Back, ReaderUtils::GO_BACK_OR_HOME_MS)) {
+    if (!pendingActions.push(rsvp::Action::Exit)) LOG_ERR("RSVP", "Pending action buffer full");
+  } else {
+    const auto queueInputAction = [this](const bool triggered, const rsvp::Action action) {
+      if (triggered && !pendingActions.push(action)) LOG_ERR("RSVP", "Pending action buffer full");
+    };
+    queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::Back), rsvp::Action::ModeSwitch);
+    queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::Confirm), rsvp::Action::TogglePlayback);
+    queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::Left), rsvp::Action::PaceDown);
+    queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::Right), rsvp::Action::PaceUp);
+    queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::PageBack), rsvp::Action::RewindFive);
+    queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::PageForward), rsvp::Action::StepForward);
+  }
+
+  if (checkpointRequestedFromRender.load(std::memory_order_acquire)) {
+    RenderLock lock(false);
+    if (!lock.ownsLock()) return;
+    if (checkpointRequestedFromRender.exchange(false)) {
+      if (!saveCheckpoint()) LOG_ERR("RSVP", "Failed to save deferred RSVP checkpoint");
+    }
+  }
 
   rsvp::Decision decision;
   {
-    RenderLock lock(*this);
+    RenderLock lock(false);
+    if (!lock.ownsLock()) return;
+    const rsvp::Action action = pendingActions.pop();
+    if (action == rsvp::Action::Exit) {
+      lock.unlock();
+      if (SETTINGS.backShortToFileBrowser)
+        onGoHome();
+      else
+        activityManager.goToFileBrowser(bookPath);
+      return;
+    }
+
     decision = session->step({.nowMs = millis(), .action = action});
+#if defined(SIMULATOR)
+    if (action != rsvp::Action::None) {
+      LOG_INF("RSVP", "control action=%u state=%u", static_cast<unsigned>(action),
+              static_cast<unsigned>(decision.state));
+    }
+#endif
     if (decision.checkpointRequested && !saveCheckpoint()) {
       LOG_ERR("RSVP", "Failed to save RSVP checkpoint");
     }

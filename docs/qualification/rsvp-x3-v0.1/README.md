@@ -14,10 +14,10 @@ are also outside this candidate's scope.
 - Embedded version: `0.1.0-crossrsvp-experimental-x3`
 - Firmware: `artifacts/rsvp-x3-v0.1/firmware/crossrsvp-x3-v0.1-experimental.bin` (local, ignored build artifact)
 - Published pre-release: [crossRSVP X3 v0.1 (experimental)](https://github.com/deman4ik/crossRSVP/releases/tag/v0.1.0-crossrsvp-x3)
-- Size: 5,425,152 bytes
-- SHA-256: `5d384b29c09ff896346a35ca95ca53626421a277deff80508ed82abac4976ad3`
+- Size: 5,425,552 bytes
+- SHA-256: `e283d18977361c5164e06291e09ea036e8ca43882a031905bfb729571e2d25aa`
 - Static RAM estimate: 56,260 / 327,680 bytes (17.2%)
-- Flash image usage: 5,411,435 / 6,553,600 bytes (82.6%)
+- Flash image usage: 5,411,847 / 6,553,600 bytes (82.6%)
 
 Reproduce and package the build with:
 
@@ -39,11 +39,11 @@ WebSocket/RainMaker code.
 
 | Gate | Result |
 | --- | --- |
-| Host GoogleTest suite | 239/239 passed |
+| Host GoogleTest suite | 243/243 passed |
 | Repository C/C++ formatting wrapper | Passed |
 | PlatformIO static analysis, low through high | Passed, no defects |
 | Production X3 build | Passed |
-| Deterministic X3 simulator matrix | Passed |
+| Deterministic X3 simulator matrix | 10/10 passed |
 
 Run the simulator matrix with:
 
@@ -67,16 +67,18 @@ repeated runs.
 | Configured long-Confirm enters RSVP directly and paused | [Quick entry](screenshots/quick-entry-paused.png) | Passed |
 | New chapter pauses before its first word | [Chapter boundary](screenshots/boundary-chapter.png) | Passed |
 | Injected source-open failure falls back to Paged Mode | [Fatal fallback](screenshots/fatal-fallback-paged.png) | Passed |
+| At 240 requested WPM, Pause, resume, and Back remain ordered during an injected 450 ms panel refresh | `high-speed-controls.log` | Passed |
 | All four X3 orientations render a paused RSVP frame | [0](screenshots/orientation-0-paused.png), [1](screenshots/orientation-1-paused.png), [2](screenshots/orientation-2-paused.png), [3](screenshots/orientation-3-paused.png) | Passed |
 
-The fatal scenario uses the simulator-only `CROSSPOINT_SIM_RSVP_FATAL_LOAD` fault injection seam. It is excluded from
-production builds.
+The fatal scenario uses the simulator-only `CROSSPOINT_SIM_RSVP_FATAL_LOAD` fault injection seam. The high-speed
+scenario uses the simulator-only `CROSSPOINT_SIM_DISPLAY_REFRESH_MS` latency seam. Both are excluded from production
+builds.
 
 ## User-story coverage
 
 | Stories from issue #1 | Current evidence | Physical X3 follow-up |
 | --- | --- | --- |
-| 1–12: entry, exclusivity, controls, pace | Host controller/activity tests plus menu and quick-entry simulator flows | Verify every mapped button and the 60–240 WPM selector; measure the observable rate above 100 WPM |
+| 1–12: entry, exclusivity, controls, pace | Host controller/activity tests, fixed pending-control buffer tests, menu/quick-entry flows, and the 450 ms refresh scenario | Verify every mapped button during active refresh and the 60–240 WPM selector; measure the observable rate above 100 WPM |
 | 13–14: refresh-aware pacing and safe cap | Fake-clock host tests prove deadline accounting and no token skipping | Measure real frame intervals, establish the physical ceiling, and verify ordered delivery |
 | 15–27: ORP, Russian Unicode, punctuation, hyphens, fitting | Host Unicode/rendering tests plus Russian simulator frames | Inspect `ё`, `й`, dialogue punctuation, smallest font, and unrenderable long-word prompt |
 | 28–34: page/chapter/content boundaries and mode position | Host mode/source tests plus chapter, image skip, highlight, and repeat simulator evidence | Exercise a page turn between modes and confirm the displayed-page restart rule |

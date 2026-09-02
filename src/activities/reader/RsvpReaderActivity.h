@@ -3,6 +3,7 @@
 #include <ArduinoEpubContentProvider.h>
 #include <Epub.h>
 #include <EpubVisibleTextSource.h>
+#include <RsvpPendingActions.h>
 #include <RsvpRefreshStats.h>
 #include <RsvpSession.h>
 #include <RsvpWordLayout.h>
@@ -42,6 +43,7 @@ class RsvpReaderActivity final : public ReaderActivity {
   std::unique_ptr<rsvp::ArduinoEpubContentProvider> contentProvider;
   std::unique_ptr<rsvp::EpubVisibleTextSource> source;
   std::unique_ptr<rsvp::RsvpSession> session;
+  rsvp::RsvpPendingActions pendingActions;
   rsvp::Decision currentDecision;
   bool switchToPagedPending = false;
   bool switchToNativeProgress = false;

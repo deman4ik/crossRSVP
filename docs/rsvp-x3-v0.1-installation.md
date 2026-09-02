@@ -9,8 +9,8 @@ candidate on X4, X4 Pro, X4C, Sticky, or another device.
 
 - File: `artifacts/rsvp-x3-v0.1/firmware/crossrsvp-x3-v0.1-experimental.bin`
 - Download: [experimental X3 pre-release](https://github.com/deman4ik/crossRSVP/releases/download/v0.1.0-crossrsvp-x3/crossrsvp-x3-v0.1-experimental.bin)
-- Size: 5,425,152 bytes
-- SHA-256: `5d384b29c09ff896346a35ca95ca53626421a277deff80508ed82abac4976ad3`
+- Size: 5,425,552 bytes
+- SHA-256: `e283d18977361c5164e06291e09ea036e8ca43882a031905bfb729571e2d25aa`
 - Embedded version: `0.1.0-crossrsvp-experimental-x3`
 
 Verify the file before copying or flashing it:
@@ -72,7 +72,9 @@ select X4. The normal upstream OTA updater follows upstream releases and will no
 2. Open an EPUB. It must start in Paged Mode; RSVP must never start automatically.
 3. Follow the [Russian RSVP button guide](rsvp-controls-ru.md): configure the long-Confirm shortcut, enter RSVP directly,
    and confirm the first word is visible while paused.
-4. Check play/pause, pace changes, rewind five words, and single-word advance.
+4. Start playback at 240 requested WPM and press Pause while a word is refreshing. The control must be retained and
+   applied after the current refresh. Resume, then press **Back** during another refresh and confirm Paged Mode opens.
+   Also check pace changes, rewind five words, and single-word advance.
 5. At an image or table prompt, press **Next Page** once. RSVP must show the next word paused without entering Paged
    Mode. Press **Back** separately to verify that Paged Mode remains available for viewing the skipped content.
 6. Confirm the last RSVP word is highlighted and re-entering RSVP without a page turn repeats it.
@@ -131,7 +133,7 @@ simulator-qualified only.
 | Heap | Above 50 KB with no declining trend | Pending |
 | Ghosting | Readable for the full run | Pending |
 | Battery | Start/end level and elapsed time recorded | Pending |
-| Controls and mode switching | All controls, quick entry, non-text skip, highlight, repeat, and page-turn restart pass | Pending |
+| Controls and mode switching | Pause/Back work during active refresh; all controls, quick entry, non-text skip, highlight, repeat, and page-turn restart pass | Pending |
 | Checkpoint triggers | 30 s, pause, switch, chapter, sleep, and exit pass | Pending |
 | Recovery data | Sleep, revision change, corrupt checkpoint, progress, and statistics pass | Pending |
 | Content/failure cases | Chapter, image/table, long word, and fatal fallback pass | Pending |
