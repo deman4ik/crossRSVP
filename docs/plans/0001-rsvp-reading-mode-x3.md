@@ -93,7 +93,7 @@ The host test drives this seam with a small real EPUB fixture, fake time, record
 
 ### Settings, i18n, persistence, and statistics
 
-- Add bounded global settings with defaults: 100 WPM, 60–120 range, 10-WPM steps, visible ORP guides, 1.5×/2×/2.5× pauses.
+- Add bounded global settings with defaults: 100 WPM, 60–240 requested range, 10-WPM steps, visible ORP guides, 1.5×/2×/2.5× pauses. Blocking display refresh sets the observable ceiling and never causes token skipping.
 - Add English source strings and Russian translations; regenerate ignored i18n outputs only for local verification.
 - Store a versioned RSVP Checkpoint inside the book cache using `HalStorage`; validate Book Revision and reject corrupt, stale, or unsupported versions.
 - Save atomically every 30 seconds and on pause, Mode Switch, chapter transition, sleep, and exit, while suppressing unchanged writes.

@@ -23,9 +23,9 @@ The v0.1 release is experimental. It uses the existing full-frame refresh path, 
 9. As an X3 reader, I want PageForward to advance one word while paused, so that I can inspect difficult text precisely.
 10. As an X3 reader, I want Left and Right to change Playback Pace in 10 WPM steps, so that speed remains adjustable during reading.
 11. As an X3 reader, I want a default Playback Pace of 100 WPM, so that the first experience is realistic for the X3 panel.
-12. As an X3 reader, I want selectable paces from 60 to 120 WPM, so that I can trade speed for clarity.
+12. As an X3 reader, I want selectable requested paces from 60 to 240 WPM, so that I can use all speed the panel can deliver while retaining a slower readable range.
 13. As an X3 reader, I want refresh time included in the playback interval, so that the displayed WPM describes observable behavior rather than timer delay alone.
-14. As an X3 reader, I want an unreachable pace capped safely, so that playback never skips words to catch up.
+14. As an X3 reader, I want blocking display refresh to limit an unreachable requested pace safely, so that playback never skips words to catch up.
 15. As a speed reader, I want every word aligned by its ORP, so that my fixation point remains stationary across words of different lengths.
 16. As a speed reader, I want the ORP letter bold and framed by fixed upper and lower guide marks, so that the fixation point is visible on a monochrome display.
 17. As a Russian reader, I want ORP calculated from Unicode characters rather than UTF-8 bytes, so that Cyrillic words align correctly.

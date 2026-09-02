@@ -9,14 +9,15 @@ Other devices and document formats are out of scope.
 
 Verified before publication:
 
-- 238/238 host tests;
+- 239/239 host tests;
 - 9 deterministic X3 simulator scenarios, including Russian RSVP, direct long-Confirm entry, Paged ↔ RSVP position
   transfer, explicit image skipping, chapter boundaries, fatal fallback, and all four orientations;
+- requested pace selectable from 60 to 240 WPM; blocking panel refresh remains the physical limit and never skips words;
 - PlatformIO cppcheck with no defects;
 - production build with no warnings introduced by RSVP;
 - embedded version `0.1.0-crossrsvp-experimental-x3`;
 - firmware size 5,425,152 bytes;
-- SHA-256 `c4d3fe981bb5fb9e5e5bb42e200e536d22bae14ee9ac7d9bae235acae05c20eb`.
+- SHA-256 `5d384b29c09ff896346a35ca95ca53626421a277deff80508ed82abac4976ad3`.
 
 Read the [qualification report](README.md), [Russian RSVP button guide](../../rsvp-controls-ru.md), and
 [installation, backup, rollback, and X3 test guide](../../rsvp-x3-v0.1-installation.md) before flashing. Record the

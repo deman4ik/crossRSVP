@@ -28,13 +28,18 @@ The tracer also logs free heap with every sample. A declining heap trend invalid
 
 ## Playback budget gate
 
-The v0.1 target remains 100 WPM, which gives a 600 ms base interval. The experimental candidate may be tested at that
-pace, but it must not be described as physically qualified until the X3 run shows:
+The default and qualification baseline remain 100 WPM, which gives a 600 ms base interval. The experimental control
+range extends to 240 requested WPM (250 ms base interval) so a faster X3 panel can be exercised. Blocking refresh time
+is charged to every frame: when it exceeds the requested interval, the next word appears as soon as the panel is ready,
+without skipping tokens. A requested value above 100 must not be described as an achieved physical rate until measured.
+
+The candidate must not be described as physically qualified until the X3 run shows:
 
 - fast-refresh p95 at or below 500 ms, leaving at least 100 ms scheduling margin at 100 WPM;
 - free heap above 50 KB with no declining trend;
 - cleanup refreshes excluded from the playing deadline and scheduled only at an explicit pause or structural boundary.
 
-The existing X3 HAL documents the cleanup path at approximately 1720 ms, so cleanup cannot be charged to a 600 ms
-playing frame. If fast p95 exceeds 500 ms, compute the initial safe cap as `floor(60000 / (p95 + 100))` WPM and round
-down to the nearest 10 WPM before promoting the candidate beyond experimental status.
+The existing X3 HAL documents the cleanup path at approximately 1720 ms, so cleanup cannot meet an ordinary playing
+interval. Compute the qualified safe pace as `floor(60000 / (p95 + 100))` WPM and round down to the nearest 10 WPM;
+the extra 100 ms retains the existing scheduling margin. Keep 100 WPM as the qualification baseline unless the
+physical run proves a higher rate; the 240-WPM control ceiling is an experimental request, not a hardware claim.
