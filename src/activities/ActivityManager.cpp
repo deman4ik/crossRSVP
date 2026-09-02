@@ -63,6 +63,9 @@ void ActivityManager::renderTaskLoop() {
       display.setInverted(SETTINGS.screenInverted != 0);
       currentActivity->render(std::move(lock));
     }
+    // Give the main task a chance to consume controls before a queued render
+    // reacquires the mutex. This matters while RSVP uses fast refreshes.
+    lock.unlock();
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
     TaskHandle_t waiter = nullptr;
     taskENTER_CRITICAL(&activityManagerSpinlock);
@@ -72,6 +75,7 @@ void ActivityManager::renderTaskLoop() {
     if (waiter) {
       xTaskNotify(waiter, 1, eIncrement);
     }
+    vTaskDelay(1);
   }
 }
 
@@ -401,15 +405,13 @@ void ActivityManager::requestUpdateAndWait() {
 
 // RenderLock
 
-RenderLock::RenderLock() {
-  xSemaphoreTake(activityManager.renderingMutex, portMAX_DELAY);
-  isLocked = true;
+RenderLock::RenderLock() : RenderLock(true) {}
+
+RenderLock::RenderLock(const bool waitForLock) {
+  isLocked = xSemaphoreTake(activityManager.renderingMutex, waitForLock ? portMAX_DELAY : 0) == pdTRUE;
 }
 
-RenderLock::RenderLock([[maybe_unused]] Activity&) {
-  xSemaphoreTake(activityManager.renderingMutex, portMAX_DELAY);
-  isLocked = true;
-}
+RenderLock::RenderLock([[maybe_unused]] Activity&) : RenderLock(true) {}
 
 RenderLock::~RenderLock() {
   if (isLocked) {

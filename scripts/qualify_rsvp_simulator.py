@@ -31,6 +31,8 @@ class Scenario:
     fatal_load: bool = False
     fixture_name: str = "default"
     quick_rsvp: bool = False
+    pace_wpm: int = 100
+    refresh_latency_ms: int = 0
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,7 +65,9 @@ def build_fixture(destination: Path) -> None:
     )
 
 
-def write_simulator_state(run_root: Path, fixture: Path, orientation: int, quick_rsvp: bool) -> None:
+def write_simulator_state(
+    run_root: Path, fixture: Path, orientation: int, quick_rsvp: bool, pace_wpm: int
+) -> None:
     fs_root = run_root / "fs_"
     books = fs_root / "books"
     crosspoint = fs_root / ".crosspoint"
@@ -78,7 +82,7 @@ def write_simulator_state(run_root: Path, fixture: Path, orientation: int, quick
         "orientation": orientation,
         "rsvpFontSize": 14,
         "rsvpGuideStyle": 1,
-        "rsvpPaceWpm": 100,
+        "rsvpPaceWpm": pace_wpm,
         "screenInverted": 1,
         "uiTheme": 1,
     }
@@ -133,12 +137,20 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
 
     with tempfile.TemporaryDirectory(prefix=f"crossrsvp-{scenario.name}-") as temp:
         run_root = Path(temp)
-        write_simulator_state(run_root, fixtures[scenario.fixture_name], scenario.orientation, scenario.quick_rsvp)
+        write_simulator_state(
+            run_root,
+            fixtures[scenario.fixture_name],
+            scenario.orientation,
+            scenario.quick_rsvp,
+            scenario.pace_wpm,
+        )
         env = os.environ.copy()
         env["CROSSPOINT_SIM_INPUT_SCRIPT"] = scenario.input_script
         env["CROSSPOINT_SIM_SCREENSHOTS"] = screenshot_schedule(output, scenario.screenshots)
         env["CROSSPOINT_SIM_FREE_HEAP"] = "65536"
         env["CROSSPOINT_SIM_MAX_ALLOC_HEAP"] = "32768"
+        if scenario.refresh_latency_ms:
+            env["CROSSPOINT_SIM_DISPLAY_REFRESH_MS"] = str(scenario.refresh_latency_ms)
         if scenario.fatal_load:
             env["CROSSPOINT_SIM_RSVP_FATAL_LOAD"] = "1"
 
@@ -186,6 +198,33 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
                 raise RuntimeError(f"{scenario.name}: long-Confirm did not enter RSVP exactly once")
             if activity_entry_count(completed.stdout, "EpubReaderMenu") != 0:
                 raise RuntimeError(f"{scenario.name}: long-Confirm opened the reader menu")
+        if scenario.name == "high-speed-controls":
+            refresh_durations = []
+            handled_controls = []
+            for line in completed.stdout.splitlines():
+                marker = "[RSVP] refresh=fast duration="
+                if marker in line:
+                    duration = line.split(marker, 1)[1].split("ms", 1)[0]
+                    refresh_durations.append(int(duration))
+                control_marker = "[RSVP] control action="
+                if control_marker in line:
+                    values = line.split(control_marker, 1)[1].split()
+                    handled_controls.append(
+                        (int(values[0]), int(values[1].split("=", 1)[1]))
+                    )
+            if not refresh_durations or min(refresh_durations) < scenario.refresh_latency_ms:
+                raise RuntimeError(
+                    f"{scenario.name}: refresh latency injection was not observed: {refresh_durations}"
+                )
+            expected_controls = [(1, 2), (1, 1), (1, 2), (6, 6)]
+            if handled_controls != expected_controls:
+                raise RuntimeError(
+                    f"{scenario.name}: controls were not retained in order: {handled_controls}"
+                )
+            if activity_entry_count(completed.stdout, "RsvpReader") != 1:
+                raise RuntimeError(f"{scenario.name}: RSVP activity was not entered exactly once")
+            if activity_entry_count(completed.stdout, "EpubReader") < 2:
+                raise RuntimeError(f"{scenario.name}: Back during refresh did not switch to Paged Mode")
         expected_pause = {
             "boundary-image": "pause=image",
             "boundary-chapter": "pause=chapter",
@@ -282,6 +321,16 @@ def scenarios() -> list[Scenario]:
             input_script=f"{enter_rsvp};6500:QUIT",
             screenshots={5200: "fatal-fallback-paged.bmp"},
             fatal_load=True,
+        ),
+        Scenario(
+            name="high-speed-controls",
+            orientation=0,
+            input_script=(
+                f"{enter_rsvp};3900:ENTER;4400:ENTER;5600:ENTER;5900:BACK;7600:QUIT"
+            ),
+            screenshots={},
+            pace_wpm=240,
+            refresh_latency_ms=450,
         ),
         *[
             Scenario(
