@@ -15,7 +15,7 @@ are also outside this candidate's scope.
 - Firmware: `artifacts/rsvp-x3-v0.1/firmware/crossrsvp-x3-v0.1-experimental.bin` (local, ignored build artifact)
 - Published pre-release: [crossRSVP X3 v0.1 (experimental)](https://github.com/deman4ik/crossRSVP/releases/tag/v0.1.0-crossrsvp-x3)
 - Size: 5,425,152 bytes
-- SHA-256: `c4d3fe981bb5fb9e5e5bb42e200e536d22bae14ee9ac7d9bae235acae05c20eb`
+- SHA-256: `5d384b29c09ff896346a35ca95ca53626421a277deff80508ed82abac4976ad3`
 - Static RAM estimate: 56,260 / 327,680 bytes (17.2%)
 - Flash image usage: 5,411,435 / 6,553,600 bytes (82.6%)
 
@@ -39,7 +39,7 @@ WebSocket/RainMaker code.
 
 | Gate | Result |
 | --- | --- |
-| Host GoogleTest suite | 238/238 passed |
+| Host GoogleTest suite | 239/239 passed |
 | Repository C/C++ formatting wrapper | Passed |
 | PlatformIO static analysis, low through high | Passed, no defects |
 | Production X3 build | Passed |
@@ -76,8 +76,8 @@ production builds.
 
 | Stories from issue #1 | Current evidence | Physical X3 follow-up |
 | --- | --- | --- |
-| 1–12: entry, exclusivity, controls, pace | Host controller/activity tests plus menu and quick-entry simulator flows | Verify every mapped button and the 60–120 WPM selector |
-| 13–14: refresh-aware pacing and safe cap | Fake-clock host tests prove deadline accounting and no token skipping | Measure real frame intervals; ordinary intervals must stay within 10% |
+| 1–12: entry, exclusivity, controls, pace | Host controller/activity tests plus menu and quick-entry simulator flows | Verify every mapped button and the 60–240 WPM selector; measure the observable rate above 100 WPM |
+| 13–14: refresh-aware pacing and safe cap | Fake-clock host tests prove deadline accounting and no token skipping | Measure real frame intervals, establish the physical ceiling, and verify ordered delivery |
 | 15–27: ORP, Russian Unicode, punctuation, hyphens, fitting | Host Unicode/rendering tests plus Russian simulator frames | Inspect `ё`, `й`, dialogue punctuation, smallest font, and unrenderable long-word prompt |
 | 28–34: page/chapter/content boundaries and mode position | Host mode/source tests plus chapter, image skip, highlight, and repeat simulator evidence | Exercise a page turn between modes and confirm the displayed-page restart rule |
 | 35–39: checkpoints, revision, recovery, progress, statistics | Host storage/session tests cover every checkpoint trigger, corruption, revision invalidation, and progress/statistics decisions | Verify sleep/resume, SD writes, native progress, and statistics on device |
@@ -93,9 +93,11 @@ hash above:
 - Back up the SD card and full 16 MiB flash, then verify both backup hashes.
 - Install the candidate using the documented SD or custom web-flasher path and confirm the embedded version.
 - Read a Russian EPUB for 30 minutes at 100 WPM with serial logging enabled. Record start/end battery percentage.
+- Exercise 120, 180, and 240 requested WPM. Record actual frame intervals; a slower panel rate is acceptable, but
+  missing or reordered words are not.
 - Confirm no missing or reordered words, crash, reset, or memory exhaustion.
-- Sample ordinary word intervals throughout the run; each must remain within 10% of the requested pace outside explicit
-  punctuation, paragraph, boundary, and cleanup pauses.
+- Sample ordinary word intervals throughout the run. When panel refresh completes within the requested interval, timing
+  must remain within 10% outside explicit pauses; otherwise record the lower physical ceiling and verify ordered delivery.
 - Record fast-refresh and cleanup distributions. Free heap must remain above 50 KB with no declining trend.
 - Confirm ghosting stays readable and cleanup never consumes or skips a word.
 - Verify menu entry, long-Confirm mapping, play/pause, rewind five, step one, explicit non-text skip, pace changes, Back,

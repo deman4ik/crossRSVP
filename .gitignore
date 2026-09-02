@@ -15,6 +15,7 @@ build
 /compile_commands.json
 /.cache
 /.codegraph/
+/.agents/
 .history/
 /.venv
 *.local*

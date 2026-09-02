@@ -202,7 +202,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   enum RSVP_GUIDE_STYLE { RSVP_GUIDES_OFF = 0, RSVP_GUIDES_ON = 1, RSVP_GUIDE_STYLE_COUNT };
 
   static constexpr uint8_t RSVP_PACE_MIN_WPM = 60;
-  static constexpr uint8_t RSVP_PACE_MAX_WPM = 120;
+  static constexpr uint8_t RSVP_PACE_MAX_WPM = 240;
   static constexpr uint8_t RSVP_PACE_STEP_WPM = 10;
   static constexpr uint8_t RSVP_DEFAULT_PACE_WPM = 100;
   static constexpr uint8_t RSVP_FONT_SIZE_MIN = 12;

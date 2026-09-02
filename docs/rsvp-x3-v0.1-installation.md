@@ -10,7 +10,7 @@ candidate on X4, X4 Pro, X4C, Sticky, or another device.
 - File: `artifacts/rsvp-x3-v0.1/firmware/crossrsvp-x3-v0.1-experimental.bin`
 - Download: [experimental X3 pre-release](https://github.com/deman4ik/crossRSVP/releases/download/v0.1.0-crossrsvp-x3/crossrsvp-x3-v0.1-experimental.bin)
 - Size: 5,425,152 bytes
-- SHA-256: `c4d3fe981bb5fb9e5e5bb42e200e536d22bae14ee9ac7d9bae235acae05c20eb`
+- SHA-256: `5d384b29c09ff896346a35ca95ca53626421a277deff80508ed82abac4976ad3`
 - Embedded version: `0.1.0-crossrsvp-experimental-x3`
 
 Verify the file before copying or flashing it:
@@ -125,6 +125,7 @@ simulator-qualified only.
 | Full flash backup | 16 MiB file and SHA-256 recorded, or USB-lock limitation documented | Pending |
 | Install | Candidate hash and embedded version match | Pending |
 | 30-minute Russian EPUB at 100 WPM | No loss/reorder, crash, reset, or exhaustion | Pending |
+| Requested pace 120/180/240 WPM | Actual intervals recorded; no skipped or reordered words | Pending |
 | Ordinary frame intervals | Within ±10% outside deliberate pauses | Pending |
 | Refresh and cleanup | Distribution captured; cleanup skips no word | Pending |
 | Heap | Above 50 KB with no declining trend | Pending |

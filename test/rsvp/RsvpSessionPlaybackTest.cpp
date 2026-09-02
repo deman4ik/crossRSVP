@@ -130,23 +130,41 @@ TEST(RsvpSessionPlayback, LongRefreshConsumesTheWholePunctuationInterval) {
   EXPECT_EQ(frameText(session.step({.nowMs = 1300})), "дальше");
 }
 
-TEST(RsvpSessionPlayback, PaceIsTenWpmAndSafelyClamped) {
+TEST(RsvpSessionPlayback, PaceReaches240WhileRefreshRemainsThePhysicalLimit) {
   VectorSource source({word("one", 0), marker(rsvp::EventKind::EndOfBook)});
   rsvp::RsvpSession session(source);
 
   EXPECT_EQ(session.step({}).paceWpm, 100u);
   EXPECT_EQ(session.step({.action = rsvp::Action::PaceDown}).paceWpm, 90u);
-  for (int i = 0; i < 10; i++) session.step({.action = rsvp::Action::PaceDown});
+  for (int i = 0; i < 20; i++) session.step({.action = rsvp::Action::PaceDown});
   EXPECT_EQ(session.step({}).paceWpm, 60u);
-  for (int i = 0; i < 10; i++) session.step({.action = rsvp::Action::PaceUp});
-  EXPECT_EQ(session.step({}).paceWpm, 100u);
+  for (int i = 0; i < 20; i++) session.step({.action = rsvp::Action::PaceUp});
+  EXPECT_EQ(session.step({}).paceWpm, 240u);
 
-  VectorSource fasterSource({word("one", 0), marker(rsvp::EventKind::EndOfBook)});
-  rsvp::RsvpPacingConfig fasterPanel;
-  fasterPanel.safeMaximumWpm = 120;
-  rsvp::RsvpSession fasterSession(fasterSource, {}, fasterPanel);
-  for (int i = 0; i < 10; i++) fasterSession.step({.action = rsvp::Action::PaceUp});
-  EXPECT_EQ(fasterSession.step({}).paceWpm, 120u);
+  VectorSource limitedSource({word("one", 0), word("two", 4), marker(rsvp::EventKind::EndOfBook)});
+  rsvp::RsvpPacingConfig maximumPace;
+  maximumPace.paceWpm = 240;
+  rsvp::RsvpSession limitedSession(limitedSource, {}, maximumPace);
+  const auto first = limitedSession.step({});
+  ASSERT_EQ(first.paceWpm, 240u);
+  const auto presented = limitedSession.step({.nowMs = 300,
+                                              .action = rsvp::Action::FramePresented,
+                                              .presentedFrameId = first.frame.id,
+                                              .refreshDurationMs = 300});
+  EXPECT_TRUE(presented.presentationAccepted);
+  EXPECT_EQ(presented.nextDeadlineMs, 300u);
+  limitedSession.step({.nowMs = 300, .action = rsvp::Action::TogglePlayback});
+  EXPECT_EQ(frameText(limitedSession.step({.nowMs = 300})), "two");
+}
+
+TEST(RsvpSessionPlayback, PanelSpecificSafeMaximumStillClampsPace) {
+  VectorSource source({word("one", 0), marker(rsvp::EventKind::EndOfBook)});
+  rsvp::RsvpPacingConfig slowerPanel;
+  slowerPanel.safeMaximumWpm = 170;
+  rsvp::RsvpSession session(source, {}, slowerPanel);
+
+  for (int i = 0; i < 20; i++) session.step({.action = rsvp::Action::PaceUp});
+  EXPECT_EQ(session.step({}).paceWpm, 170u);
 }
 
 TEST(RsvpSessionPlayback, PunctuationAndParagraphExtendTheDeadline) {

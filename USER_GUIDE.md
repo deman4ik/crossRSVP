@@ -627,6 +627,10 @@ RSVP presents one EPUB word at a time around a fixed optimal recognition point a
 from the Reader Menu, or configure **Settings → Controls → Long-press Menu → RSVP Reading Mode** and hold the logical
 **Confirm** button for about 0.4 second. RSVP always opens paused, and newly opened books still start in Paged Mode.
 
+Playback pace is selectable from 60 to 240 WPM in 10-WPM steps and defaults to 100 WPM. The value is a requested
+pace: blocking E-Ink refresh time is part of every word interval, so the panel may impose a lower observable rate at
+higher settings. RSVP never skips words to catch up.
+
 The complete Russian control map—including remapped buttons, side-button swapping, and how to skip an image/table
 boundary one element at a time—is in the [X3 RSVP button guide](docs/rsvp-controls-ru.md).
 

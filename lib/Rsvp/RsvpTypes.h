@@ -73,8 +73,8 @@ enum class PauseReason : uint8_t {
 struct RsvpPacingConfig {
   uint16_t paceWpm = 100;
   uint16_t minimumWpm = 60;
-  uint16_t maximumWpm = 120;
-  uint16_t safeMaximumWpm = 100;
+  uint16_t maximumWpm = 240;
+  uint16_t safeMaximumWpm = 240;
   uint16_t paceStepWpm = 10;
   uint16_t clausePausePercent = 150;
   uint16_t sentencePausePercent = 200;
