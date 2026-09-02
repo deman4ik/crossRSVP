@@ -25,8 +25,20 @@ A Focus Reading strategy that emphasizes one Optimal Recognition Point grapheme 
 _Avoid_: ORP Mode, ORP Reading Mode
 
 **RSVP Mode**:
-Rapid Serial Visual Presentation in which one word at a time is presented at a fixed visual focus.
+Rapid Serial Visual Presentation in which one Active Word at a time is presented at a fixed visual focus, optionally surrounded by a Context Line.
 _Avoid_: Speed mode, flash mode
+
+**Active Word**:
+The sole word in an RSVP frame whose ORP is emphasized and whose presentation advances Reading Position and Playback Pace.
+_Avoid_: Main word, highlighted word, current token
+
+**Context Line**:
+Optional previous and following words displayed around the Active Word without advancing Reading Position or Playback Pace.
+_Avoid_: Extra words, multi-word RSVP
+
+**Context Boundary**:
+A sentence, paragraph, chapter, or non-text transition across which a Context Line does not display neighboring words.
+_Avoid_: Playback pause, page boundary
 
 **Reading Position**:
 The shared semantic location in a book from which either Reading Mode can continue.
