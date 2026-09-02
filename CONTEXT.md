@@ -12,6 +12,18 @@ _Avoid_: Reader type, view
 Conventional reading in which a page of text remains visible until the reader advances it.
 _Avoid_: Normal mode, ordinary mode
 
+**Focus Reading**:
+An optional fixation aid within Paged Mode that emphasizes eligible words using either Focus Prefix or ORP Emphasis. It is not a Reading Mode.
+_Avoid_: Focus mode, third reading mode
+
+**Focus Prefix**:
+A Focus Reading strategy that emphasizes the opening portion of each eligible word.
+_Avoid_: Bionic mode, ORP
+
+**ORP Emphasis**:
+A Focus Reading strategy that emphasizes one Optimal Recognition Point grapheme in each eligible word while leaving the rest of the word unchanged.
+_Avoid_: ORP Mode, ORP Reading Mode
+
 **RSVP Mode**:
 Rapid Serial Visual Presentation in which one word at a time is presented at a fixed visual focus.
 _Avoid_: Speed mode, flash mode
@@ -51,4 +63,3 @@ _Avoid_: Trimmed word, clean word
 **Playback Pace**:
 The requested rate of word presentation, including the time required to update the display but excluding deliberate linguistic pauses. It cannot exceed the pace physically achievable by the panel.
 _Avoid_: Timer delay, nominal WPM
-
