@@ -1029,3 +1029,17 @@ struct PageLine {
 ---
 
 Philosophy: We are building a dedicated e-reader, not a Swiss Army knife. If a feature adds RAM pressure without significantly improving the reading experience, it is Out of Scope.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs for this repo live as GitHub issues, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five canonical triage labels unchanged: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repo using the root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
