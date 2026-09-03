@@ -1,0 +1,4 @@
+# Imported by PioArduino's filesystem builders and this project's generators.
+littlefs-python>=0.16.0
+fatfs-ng>=0.1.14
+PyYAML>=6.0.2

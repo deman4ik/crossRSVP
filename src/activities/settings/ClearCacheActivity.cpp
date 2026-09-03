@@ -122,7 +122,9 @@ void ClearCacheActivity::clearCache() {
 
       file.close();  // Close before attempting to delete
 
-      if (Storage.removeDir(fullPath.c_str())) {
+      const bool removed =
+          itemName.startsWith("epub_") ? clearEpubDerivedCache(fullPath.c_str()) : Storage.removeDir(fullPath.c_str());
+      if (removed) {
         clearedCount++;
       } else {
         LOG_ERR("CLEAR_CACHE", "Failed to remove: %s", fullPath.c_str());

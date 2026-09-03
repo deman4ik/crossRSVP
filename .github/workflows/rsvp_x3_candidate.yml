@@ -45,10 +45,10 @@ jobs:
       - name: Upload candidate and diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: crossrsvp-x3-v0.1-experimental-${{ github.sha }}
+          name: crossrsvp-x3-v0.2-experimental-${{ github.sha }}
           path: |
-            artifacts/rsvp-x3-v0.1/firmware/crossrsvp-x3-v0.1-experimental.bin
-            artifacts/rsvp-x3-v0.1/firmware/SHA256SUMS
+            artifacts/rsvp-x3-v0.2/firmware/crossrsvp-x3-v0.2-experimental.bin
+            artifacts/rsvp-x3-v0.2/firmware/SHA256SUMS
             .pio/build/rsvp_x3_release/firmware.elf
             .pio/build/rsvp_x3_release/firmware.map
             .pio/build/rsvp_x3_release/partitions.bin

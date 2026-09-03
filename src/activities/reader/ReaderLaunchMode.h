@@ -12,14 +12,19 @@ struct ReaderLaunchContext {
   bool temporaryHighlight = false;
   uint32_t tokenHash32 = 0;
   uint16_t tokenLength = 0;
+  bool restoreCheckpoint = false;
+  bool checkpointInvalidationPending = false;
 
   ReaderLaunchContext() = default;
   explicit ReaderLaunchContext(ReaderLaunchMode mode) : mode(mode) {}
   ReaderLaunchContext(ReaderLaunchMode mode, rsvp::ResumeAnchor anchor, bool temporaryHighlight = false,
-                      uint32_t tokenHash32 = 0, uint16_t tokenLength = 0)
+                      uint32_t tokenHash32 = 0, uint16_t tokenLength = 0, bool restoreCheckpoint = false,
+                      bool checkpointInvalidationPending = false)
       : mode(mode),
         anchor(anchor),
         temporaryHighlight(temporaryHighlight),
         tokenHash32(tokenHash32),
-        tokenLength(tokenLength) {}
+        tokenLength(tokenLength),
+        restoreCheckpoint(restoreCheckpoint),
+        checkpointInvalidationPending(checkpointInvalidationPending) {}
 };

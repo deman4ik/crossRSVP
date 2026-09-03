@@ -10,9 +10,12 @@ class RsvpSession final {
   explicit RsvpSession(RsvpSource& source, ResumeAnchor initialAnchor = {}, RsvpPacingConfig pacing = {});
 
   Decision step(const Input& input);
-  ResumeAnchor currentAnchor() const { return currentEvent.anchor; }
+  ResumeAnchor currentAnchor() const { return presentedAnchor; }
   uint32_t currentTokenHash() const;
-  uint16_t currentTokenLength() const { return preparedWord.textLength; }
+  uint16_t currentTokenLength() const { return presentedTokenLength; }
+  ResumeAnchor requestedAnchor() const { return currentEvent.anchor; }
+  uint32_t requestedTokenHash() const;
+  uint16_t requestedTokenLength() const { return preparedWord.textLength; }
   uint64_t activeReadingMs() const { return accumulatedActiveMs; }
 
  private:
@@ -26,6 +29,7 @@ class RsvpSession final {
   void setError(Decision& decision, Error error);
   void fillDecision(Decision& decision) const;
   uint32_t baseIntervalMs() const;
+  static uint32_t tokenHash(const PreparedWord& word);
   uint16_t currentPausePercent() const;
   uint16_t effectiveMaximumWpm() const;
   static PauseReason pauseReasonFor(NonTextKind kind);
@@ -49,12 +53,16 @@ class RsvpSession final {
   uint16_t pendingPunctuationPause = 100;
   State state = State::Empty;
   uint32_t frameId = 0;
+  ResumeAnchor presentedAnchor;
+  uint32_t presentedTokenHash32 = 0;
+  uint16_t presentedTokenLength = 0;
   uint32_t nextDeadlineMs = 0;
   uint32_t currentPauseMs = 0;
   uint16_t framePausePercent = 100;
   uint16_t paceWpm = 100;
   bool framePresented = false;
   bool checkpointRequestedThisStep = false;
+  bool periodicCheckpointPending = false;
   bool checkpointClockStarted = false;
   bool clockInitialized = false;
   uint32_t lastCheckpointRequestMs = 0;

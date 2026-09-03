@@ -9,7 +9,8 @@ enum class ReadingMode : uint8_t { Paged, Rsvp };
 struct PagedResumeContext {
   ResumeAnchor currentAnchor;
   ResumeAnchor pageStartAnchor;
-  bool pageTurned = false;
+  bool explicitNavigation = false;
+  bool checkpointRestoreSuppressed = false;
 };
 
 struct ModeSwitchDecision {
@@ -17,6 +18,9 @@ struct ModeSwitchDecision {
   ResumeAnchor anchor;
   bool temporaryHighlight = false;
   bool paused = false;
+  // When true, RSVP should try its durable checkpoint first and use anchor as
+  // the page-start fallback when no checkpoint exists.
+  bool restoreCheckpoint = false;
 };
 
 class RsvpModeSwitch final {

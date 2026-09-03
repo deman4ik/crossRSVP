@@ -32,9 +32,8 @@ TEST(RsvpModeSwitch, LeavingRsvpHighlightsTheLastDisplayedAnchorInPagedMode) {
 }
 
 TEST(RsvpModeSwitch, ReturningToRsvpOnTheSamePageRepeatsTheCurrentAnchor) {
-  const rsvp::PagedResumeContext context{.currentAnchor = anchor(1, 80, 2),
-                                         .pageStartAnchor = anchor(1, 64),
-                                         .pageTurned = false};
+  const rsvp::PagedResumeContext context{
+      .currentAnchor = anchor(1, 80, 2), .pageStartAnchor = anchor(1, 64), .explicitNavigation = false};
 
   const auto decision = rsvp::RsvpModeSwitch::fromPaged(context);
 
@@ -48,9 +47,8 @@ TEST(RsvpModeSwitch, ReturningToRsvpOnTheSamePageRepeatsTheCurrentAnchor) {
 }
 
 TEST(RsvpModeSwitch, ReturningToRsvpAfterPageTurnStartsAtTheDisplayedPageStart) {
-  const rsvp::PagedResumeContext context{.currentAnchor = anchor(1, 80, 2),
-                                         .pageStartAnchor = anchor(1, 128, 3),
-                                         .pageTurned = true};
+  const rsvp::PagedResumeContext context{
+      .currentAnchor = anchor(1, 80, 2), .pageStartAnchor = anchor(1, 128, 3), .explicitNavigation = true};
 
   const auto decision = rsvp::RsvpModeSwitch::fromPaged(context);
 
@@ -61,6 +59,53 @@ TEST(RsvpModeSwitch, ReturningToRsvpAfterPageTurnStartsAtTheDisplayedPageStart) 
   EXPECT_TRUE(decision.anchor.valid);
   EXPECT_TRUE(decision.paused);
   EXPECT_FALSE(decision.temporaryHighlight);
+}
+
+TEST(RsvpModeSwitch, ReopenedPagedUsesPageStartAsFallbackWhileRequestingCheckpointRestore) {
+  const rsvp::PagedResumeContext context{
+      .currentAnchor = {}, .pageStartAnchor = anchor(1, 128, 3), .explicitNavigation = false};
+
+  const auto decision = rsvp::RsvpModeSwitch::fromPaged(context);
+
+  EXPECT_EQ(decision.mode, rsvp::ReadingMode::Rsvp);
+  EXPECT_EQ(decision.anchor.spineIndex, 1);
+  EXPECT_EQ(decision.anchor.visibleTextOffset, 128u);
+  EXPECT_TRUE(decision.anchor.valid);
+  EXPECT_TRUE(decision.restoreCheckpoint);
+  EXPECT_TRUE(decision.paused);
+}
+
+TEST(RsvpModeSwitch, LayoutOnlyReflowKeepsInMemoryRsvpAnchorWithoutCheckpointRestore) {
+  const rsvp::PagedResumeContext context{
+      .currentAnchor = anchor(1, 80, 2), .pageStartAnchor = anchor(1, 128, 3), .explicitNavigation = false};
+
+  const auto decision = rsvp::RsvpModeSwitch::fromPaged(context);
+
+  EXPECT_EQ(decision.anchor.visibleTextOffset, 80u);
+  EXPECT_FALSE(decision.restoreCheckpoint);
+}
+
+TEST(RsvpModeSwitch, ExplicitNavigationWinsOverAnOlderInMemoryRsvpAnchor) {
+  const rsvp::PagedResumeContext context{
+      .currentAnchor = anchor(1, 80, 2), .pageStartAnchor = anchor(1, 128, 3), .explicitNavigation = true};
+
+  const auto decision = rsvp::RsvpModeSwitch::fromPaged(context);
+
+  EXPECT_EQ(decision.anchor.visibleTextOffset, 128u);
+  EXPECT_FALSE(decision.restoreCheckpoint);
+}
+
+TEST(RsvpModeSwitch, FailedCheckpointInvalidationUsesPageStartWithoutRestoringTheRejectedFile) {
+  const rsvp::PagedResumeContext context{.currentAnchor = {},
+                                         .pageStartAnchor = anchor(1, 128, 3),
+                                         .explicitNavigation = false,
+                                         .checkpointRestoreSuppressed = true};
+
+  const auto decision = rsvp::RsvpModeSwitch::fromPaged(context);
+
+  EXPECT_EQ(decision.anchor.visibleTextOffset, 128u);
+  EXPECT_FALSE(decision.restoreCheckpoint);
+  EXPECT_TRUE(decision.paused);
 }
 
 }  // namespace

@@ -3,13 +3,16 @@ add_executable(RsvpTest
   RsvpLexicalCoreTest.cpp
   RsvpCheckpointTest.cpp
   RsvpCheckpointFileTest.cpp
+  RsvpResumeLifecycleTest.cpp
   RsvpSessionPlaybackTest.cpp
   RsvpModeSwitchTest.cpp
   RsvpPendingActionsTest.cpp
+  EpubCacheUtilsTest.cpp
   ${REPO_ROOT}/lib/Rsvp/EpubVisibleTextSource.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpModeSwitch.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpCheckpoint.cpp
   ${REPO_ROOT}/src/activities/reader/RsvpCheckpointFile.cpp
+  ${REPO_ROOT}/src/util/EpubCacheUtils.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpRefreshStats.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpSession.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpLexicalCore.cpp
@@ -45,6 +48,7 @@ target_include_directories(RsvpTest PRIVATE
   ${REPO_ROOT}/lib/Epub
   ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/lib/Utf8
+  ${REPO_ROOT}/src/util
 )
 
 target_link_libraries(RsvpTest PRIVATE

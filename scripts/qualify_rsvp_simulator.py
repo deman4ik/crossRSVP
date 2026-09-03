@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Run repeatable CrossRSVP v0.1 scenarios in the X3 simulator."""
+"""Run repeatable CrossRSVP v0.2 scenarios in the X3 simulator."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=REPO_ROOT / "artifacts" / "rsvp-x3-v0.1" / "simulator",
+        default=REPO_ROOT / "artifacts" / "rsvp-x3-v0.2" / "simulator",
         help="directory for logs and BMP screenshots",
     )
     parser.add_argument(
@@ -261,7 +261,7 @@ def validate_flow_screenshots(output: Path) -> None:
 
 def validate_orientation_screenshots(output: Path) -> None:
     paths = [output / f"orientation-{orientation}-paused.bmp" for orientation in range(4)]
-    expected_dimensions = [(1056, 1584), (1584, 1056), (1056, 1584), (1584, 1056)]
+    expected_dimensions = [(528, 792), (792, 528), (528, 792), (792, 528)]
     for path, expected in zip(paths, expected_dimensions):
         actual = bmp_dimensions(path)
         if actual != expected:

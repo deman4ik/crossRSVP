@@ -295,9 +295,63 @@ TEST(RsvpSessionPlayback, FrameCarriesNormalizedUnicodeOrpPreparation) {
   EXPECT_STREQ(decision.frame.text, "\xD1\x91-\xD0\xBA\xD0\xBE\xD1\x82");
   const auto& prepared = *decision.frame.preparedWord;
   EXPECT_EQ(std::string(prepared.text + prepared.pivot.begin, prepared.pivot.size()), "\xD0\xBA");
+  acknowledge(session, decision, 0);
   EXPECT_EQ(session.currentTokenLength(), prepared.textLength);
   EXPECT_EQ(session.currentTokenHash(), fnv1a(prepared.text, prepared.textLength));
   EXPECT_NE(session.currentTokenHash(), fnv1a(rawWord, sizeof(rawWord) - 1));
+}
+
+TEST(RsvpSessionPlayback, DurableIdentityAdvancesOnlyAfterMatchingPresentation) {
+  VectorSource source({word("one", 7), word("two", 11), marker(rsvp::EventKind::EndOfBook)});
+  rsvp::RsvpSession session(source);
+
+  const auto first = session.step({.nowMs = 100});
+  ASSERT_TRUE(first.render);
+  EXPECT_FALSE(session.currentAnchor().valid);
+  EXPECT_EQ(session.currentTokenLength(), 0u);
+
+  const auto stale = session.step({.nowMs = 200,
+                                   .action = rsvp::Action::FramePresented,
+                                   .presentedFrameId = first.frame.id + 1,
+                                   .refreshDurationMs = 100});
+  EXPECT_FALSE(stale.presentationAccepted);
+  EXPECT_FALSE(session.currentAnchor().valid);
+
+  const auto firstAcknowledged = session.step({.nowMs = 200,
+                                               .action = rsvp::Action::FramePresented,
+                                               .presentedFrameId = first.frame.id,
+                                               .refreshDurationMs = 100});
+  ASSERT_TRUE(firstAcknowledged.presentationAccepted);
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 7u);
+  EXPECT_EQ(session.currentTokenLength(), 3u);
+
+  session.step({.nowMs = 200, .action = rsvp::Action::TogglePlayback});
+  const auto second = session.step({.nowMs = 800});
+  ASSERT_TRUE(second.render);
+  EXPECT_EQ(frameText(second), "two");
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 7u);
+  EXPECT_EQ(session.currentTokenLength(), 3u);
+}
+
+TEST(RsvpSessionPlayback, PeriodicCheckpointWaitsForPresentationAcknowledgement) {
+  VectorSource source({word("one", 7), word("two", 11), marker(rsvp::EventKind::EndOfBook)});
+  rsvp::RsvpSession session(source);
+
+  const auto first = session.step({.nowMs = 0});
+  acknowledge(session, first, 0);
+  session.step({.nowMs = 0, .action = rsvp::Action::TogglePlayback});
+  const auto second = session.step({.nowMs = 600});
+  ASSERT_TRUE(second.render);
+
+  const auto tick = session.step({.nowMs = 30000});
+  EXPECT_FALSE(tick.checkpointRequested);
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 7u);
+
+  const auto acknowledgement =
+      session.step({.nowMs = 30000, .action = rsvp::Action::FramePresented, .presentedFrameId = second.frame.id});
+  EXPECT_TRUE(acknowledgement.presentationAccepted);
+  EXPECT_TRUE(acknowledgement.checkpointRequested);
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 11u);
 }
 
 TEST(RsvpSessionPlayback, PixelOverflowPausesWithPagedModeAvailable) {
@@ -355,9 +409,9 @@ TEST(RsvpSessionPlayback, CheckpointPolicyCoversPeriodicPauseAndModeSwitch) {
   rsvp::RsvpSession session(source);
 
   const auto first = session.step({.nowMs = 100});
-  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 7u);
   EXPECT_FALSE(first.checkpointRequested);
   acknowledge(session, first, 200);
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 7u);
 
   EXPECT_FALSE(session.step({.nowMs = 200, .action = rsvp::Action::TogglePlayback}).checkpointRequested);
   const auto second = session.step({.nowMs = 30199});
@@ -384,13 +438,15 @@ TEST(RsvpSessionPlayback, ManualPausedNavigationRequestsCheckpoint) {
   const auto first = session.step({});
   acknowledge(session, first, 0);
   const auto forward = session.step({.action = rsvp::Action::StepForward});
-  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 4U);
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 0U);
   EXPECT_TRUE(forward.checkpointRequested);
   acknowledge(session, forward, 0);
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 4U);
 
   const auto rewind = session.step({.action = rsvp::Action::RewindFive});
-  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 0U);
   EXPECT_TRUE(rewind.checkpointRequested);
+  acknowledge(session, rewind, 0);
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 0U);
 }
 
 TEST(RsvpSessionPlayback, ActiveReadingTimeExcludesPausedTime) {

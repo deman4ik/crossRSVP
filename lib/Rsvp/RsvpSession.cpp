@@ -53,14 +53,18 @@ RsvpSession::RsvpSession(RsvpSource& source, const ResumeAnchor initialAnchor, c
 
 uint32_t RsvpSession::baseIntervalMs() const { return 60000u / std::max<uint16_t>(1, paceWpm); }
 
-uint32_t RsvpSession::currentTokenHash() const {
+uint32_t RsvpSession::tokenHash(const PreparedWord& word) {
   uint32_t hash = 2166136261U;
-  for (uint16_t index = 0; index < preparedWord.textLength; ++index) {
-    hash ^= static_cast<uint8_t>(preparedWord.text[index]);
+  for (uint16_t index = 0; index < word.textLength; ++index) {
+    hash ^= static_cast<uint8_t>(word.text[index]);
     hash *= 16777619U;
   }
   return hash;
 }
+
+uint32_t RsvpSession::currentTokenHash() const { return presentedTokenHash32; }
+
+uint32_t RsvpSession::requestedTokenHash() const { return tokenHash(preparedWord); }
 
 uint16_t RsvpSession::effectiveMaximumWpm() const { return std::min(pacing.maximumWpm, pacing.safeMaximumWpm); }
 
@@ -288,8 +292,12 @@ Decision RsvpSession::step(const Input& input) {
   clockInitialized = true;
   if (state == State::Playing && checkpointClockStarted &&
       static_cast<uint32_t>(input.nowMs - lastCheckpointRequestMs) >= 30000u) {
-    checkpointRequestedThisStep = true;
-    lastCheckpointRequestMs = input.nowMs;
+    if (framePresented) {
+      periodicCheckpointPending = true;
+    } else {
+      checkpointRequestedThisStep = true;
+      lastCheckpointRequestMs = input.nowMs;
+    }
   }
 
   Decision decision;
@@ -319,10 +327,18 @@ Decision RsvpSession::step(const Input& input) {
     decision.presentedAtMs = input.nowMs;
     decision.refreshDurationMs = input.refreshDurationMs;
     if (framePresented) {
+      presentedAnchor = currentEvent.anchor;
+      presentedTokenHash32 = tokenHash(preparedWord);
+      presentedTokenLength = preparedWord.textLength;
       framePresented = false;
       const uint32_t remainingInterval =
           input.refreshDurationMs < currentPauseMs ? currentPauseMs - input.refreshDurationMs : 0;
       nextDeadlineMs = input.nowMs + remainingInterval;
+      if (periodicCheckpointPending) {
+        periodicCheckpointPending = false;
+        checkpointRequestedThisStep = true;
+        lastCheckpointRequestMs = input.nowMs;
+      }
     }
     fillDecision(decision);
     return decision;

@@ -97,6 +97,19 @@ Never invoke or probe `clang-format` directly. The repository wrapper is the onl
    
    * **Usage**: `pio run`, `pio run -t upload`, etc.
 
+   * **Python environment rule**: Before the first build on a host, read `Python Executable` from `pio system info`
+     and install `requirements-platformio.txt` into that exact interpreter. Never use an unrelated system `pip` or
+     assume packages installed for another Python are visible to PlatformIO. After a Homebrew/PlatformIO upgrade,
+     repeat the check because the embedded interpreter path can change. Prefer
+     `uv pip install --python <PlatformIO Python Executable> -r requirements-platformio.txt`; if that interpreter has
+     pip, `<PlatformIO Python Executable> -m pip install -r requirements-platformio.txt` is equivalent.
+
+   * **Incremental build rule**: Keep `.pio/` between builds and run the same environment again; PlatformIO then
+     recompiles changed translation units and relinks instead of rebuilding every dependency. Do not run the clean
+     target (`pio run -t clean`) unless diagnosing stale output or changing toolchain/platform fundamentals. During
+     development, omit `-j 1` (or use a sensible `-j N`) to allow parallel compilation; reserve the serialized release
+     build for final verification when reproducible, low-load output is more important than speed.
+
 **Configuration Files**:
 
 * `platformio.ini`: Main build configuration (committed to git)
@@ -723,6 +736,21 @@ docs/<topic>                      # Documentation updates
 - `feature/sd-download-progress`
 - `fix/123-orientation-crash`
 - `refactor/hal-storage`
+
+### Build Version Policy
+
+Use Semantic Versioning for every completed firmware task and bump the version exactly once after implementation and
+verification, before the final release build and commit:
+
+- A new capability or user-visible behavior increments **minor** and resets patch to zero (`1.5.3` → `1.6.0`).
+- A bug fix that restores intended behavior increments **patch** (`1.5.3` → `1.5.4`).
+- **Major** remains unchanged unless the user explicitly requests the new major version.
+- For a mixed task, use minor when it contains a new capability; otherwise use patch.
+- Update the value embedded by the target being built: `[crosspoint] version` in `platformio.ini` for standard targets,
+  or the target-specific `CROSSPOINT_VERSION` override for a dedicated build such as `rsvp_x3_release`. Keep release
+  documentation, package names, and checksums aligned with that embedded version.
+- Documentation-only, test-only, and internal refactoring tasks that do not change firmware behavior do not bump the
+  build version.
 
 ### Commit Message Format
 

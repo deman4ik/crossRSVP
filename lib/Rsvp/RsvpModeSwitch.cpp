@@ -15,7 +15,12 @@ ModeSwitchDecision RsvpModeSwitch::fromRsvp(const ResumeAnchor& lastDisplayedAnc
 ModeSwitchDecision RsvpModeSwitch::fromPaged(const PagedResumeContext& context) {
   ModeSwitchDecision decision;
   decision.mode = ReadingMode::Rsvp;
-  decision.anchor = context.pageTurned ? context.pageStartAnchor : context.currentAnchor;
+  const bool usePageStart = context.explicitNavigation || context.checkpointRestoreSuppressed;
+  decision.anchor = usePageStart ? context.pageStartAnchor : context.currentAnchor;
+  if (!usePageStart && !context.currentAnchor.valid) {
+    decision.anchor = context.pageStartAnchor;
+    decision.restoreCheckpoint = true;
+  }
   decision.paused = true;
   return decision;
 }

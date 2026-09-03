@@ -12,7 +12,7 @@ class RsvpCheckpointFile final {
   static bool computeBookRevision(const std::string& bookPath, uint64_t& revision);
   static CheckpointStatus load(const std::string& cachePath, uint64_t expectedRevision, RsvpCheckpoint& checkpoint);
   static bool save(const std::string& cachePath, const RsvpCheckpoint& checkpoint);
-  static void invalidate(const std::string& cachePath);
+  static bool invalidate(const std::string& cachePath);
 };
 
 }  // namespace rsvp

@@ -1,6 +1,5 @@
-#include <gtest/gtest.h>
-
 #include <HalStorage.h>
+#include <gtest/gtest.h>
 
 #include <filesystem>
 #include <fstream>
@@ -101,6 +100,35 @@ TEST_F(RsvpCheckpointFileTest, ExistingButUnreadableCheckpointIsNotReportedAsMis
   rsvp::RsvpCheckpoint loaded;
   EXPECT_EQ(rsvp::RsvpCheckpointFile::load(directory.string(), value.bookRevision, loaded),
             rsvp::CheckpointStatus::ReadError);
+}
+
+TEST_F(RsvpCheckpointFileTest, InvalidationRemovesEveryCheckpointGeneration) {
+  const auto value = checkpoint(10);
+  ASSERT_TRUE(rsvp::RsvpCheckpointFile::save(directory.string(), value));
+  {
+    std::ofstream output(temporary(), std::ios::binary);
+    output << "temporary";
+  }
+  {
+    std::ofstream output(backup(), std::ios::binary);
+    output << "backup";
+  }
+
+  EXPECT_TRUE(rsvp::RsvpCheckpointFile::invalidate(directory.string()));
+  EXPECT_FALSE(Storage.exists(path().c_str()));
+  EXPECT_FALSE(Storage.exists(temporary().c_str()));
+  EXPECT_FALSE(Storage.exists(backup().c_str()));
+}
+
+TEST_F(RsvpCheckpointFileTest, FailedInvalidationCanBeRetried) {
+  const auto value = checkpoint(10);
+  ASSERT_TRUE(rsvp::RsvpCheckpointFile::save(directory.string(), value));
+  Storage.failRemove(path());
+
+  EXPECT_FALSE(rsvp::RsvpCheckpointFile::invalidate(directory.string()));
+  EXPECT_TRUE(Storage.exists(path().c_str()));
+  EXPECT_TRUE(rsvp::RsvpCheckpointFile::invalidate(directory.string()));
+  EXPECT_FALSE(Storage.exists(path().c_str()));
 }
 
 TEST_F(RsvpCheckpointFileTest, BookRevisionChangesWhenBookBytesChange) {

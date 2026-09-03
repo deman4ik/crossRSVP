@@ -11,8 +11,7 @@ constexpr const char* kCheckpointName = "/rsvp_checkpoint.bin";
 
 std::string checkpointPath(const std::string& cachePath) { return cachePath + kCheckpointName; }
 
-CheckpointStatus readCheckpoint(const std::string& path, const uint64_t expectedRevision,
-                                RsvpCheckpoint& checkpoint) {
+CheckpointStatus readCheckpoint(const std::string& path, const uint64_t expectedRevision, RsvpCheckpoint& checkpoint) {
   if (!Storage.exists(path.c_str())) return CheckpointStatus::Missing;
   HalFile file;
   if (!Storage.openFileForRead("RSVP", path, file)) return CheckpointStatus::ReadError;
@@ -27,9 +26,9 @@ CheckpointStatus readCheckpoint(const std::string& path, const uint64_t expected
 bool sameCheckpoint(const RsvpCheckpoint& left, const RsvpCheckpoint& right) {
   return left.bookRevision == right.bookRevision && left.anchor.spineIndex == right.anchor.spineIndex &&
          left.anchor.visibleTextOffset == right.anchor.visibleTextOffset &&
-         left.anchor.sameOffsetOrdinal == right.anchor.sameOffsetOrdinal &&
-         left.anchor.valid == right.anchor.valid && left.tokenHash32 == right.tokenHash32 &&
-         left.tokenLength == right.tokenLength && left.activeRsvpTimeMs == right.activeRsvpTimeMs;
+         left.anchor.sameOffsetOrdinal == right.anchor.sameOffsetOrdinal && left.anchor.valid == right.anchor.valid &&
+         left.tokenHash32 == right.tokenHash32 && left.tokenLength == right.tokenLength &&
+         left.activeRsvpTimeMs == right.activeRsvpTimeMs;
 }
 
 }  // namespace
@@ -118,13 +117,15 @@ bool RsvpCheckpointFile::save(const std::string& cachePath, const RsvpCheckpoint
   return true;
 }
 
-void RsvpCheckpointFile::invalidate(const std::string& cachePath) {
+bool RsvpCheckpointFile::invalidate(const std::string& cachePath) {
   const std::string path = checkpointPath(cachePath);
   const std::string temporary = path + ".tmp";
   const std::string backup = path + ".bak";
-  if (Storage.exists(path.c_str())) Storage.remove(path.c_str());
-  if (Storage.exists(temporary.c_str())) Storage.remove(temporary.c_str());
-  if (Storage.exists(backup.c_str())) Storage.remove(backup.c_str());
+  bool removed = true;
+  if (Storage.exists(path.c_str()) && !Storage.remove(path.c_str())) removed = false;
+  if (Storage.exists(temporary.c_str()) && !Storage.remove(temporary.c_str())) removed = false;
+  if (Storage.exists(backup.c_str()) && !Storage.remove(backup.c_str())) removed = false;
+  return removed;
 }
 
 }  // namespace rsvp

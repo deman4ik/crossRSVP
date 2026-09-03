@@ -41,10 +41,12 @@
 #include "ReaderToolbarUi.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include "RsvpCheckpointFile.h"
 #include "SdCardFontSystem.h"
 #include "activities/settings/TextSettingsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/BookCacheUtils.h"
 #include "util/BookmarkUtil.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
@@ -727,6 +729,7 @@ void EpubReaderActivity::jumpToPercent(int percent) {
       (spineSize == 0) ? 0.0f : static_cast<float>(targetSize - prevCumulative) / static_cast<float>(spineSize);
   pendingSpineProgress = std::clamp(pendingSpineProgress, 0.0f, 1.0f);
 
+  markExplicitPagedNavigation();
   {
     RenderLock lock;
     clearDeferredReposition();
@@ -745,6 +748,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       openReaderMenu();
     } else {
       const auto& sync = std::get<ProgressChangeResult>(result.data);
+      markExplicitPagedNavigation();
 
       if (sync.hasVisibleTextOffset && sync.spineIndex >= 0 && sync.spineIndex < epub->getSpineItemsCount()) {
         RenderLock lock;
@@ -821,6 +825,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
               return;
             }
             const auto& chapterResult = std::get<ChapterResult>(result.data);
+            markExplicitPagedNavigation();
             RenderLock lock;
             clearDeferredReposition();
             currentSpineIndex = chapterResult.spineIndex;
@@ -914,7 +919,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
           uint16_t backupPage = section->currentPage;
           uint16_t backupPageCount = section->pageCount;
           section.reset();
-          epub->clearCache();
+          clearEpubDerivedCache(epub->getCachePath());
           epub->setupCacheDir();
           if (!saveProgress(backupSpine, backupPage, backupPageCount)) {
             LOG_ERR("ERS", "Failed to save progress before cache clear");
@@ -1073,7 +1078,7 @@ bool EpubReaderActivity::pageTurn(bool isForwardTurn) {
     if (section->currentPage < section->pageCount - 1 || section->isBuilding()) {
       section->currentPage++;
       lastPageTurnTime = millis();
-      pageTurnedSinceRsvp = true;
+      markExplicitPagedNavigation();
       return true;
     } else if (currentSpineIndex + 1 < epub->getSpineItemsCount()) {
       RenderLock lock;
@@ -1081,19 +1086,19 @@ bool EpubReaderActivity::pageTurn(bool isForwardTurn) {
       currentSpineIndex++;
       section.reset();
       lastPageTurnTime = millis();
-      pageTurnedSinceRsvp = true;
+      markExplicitPagedNavigation();
       return true;
     } else {
       currentSpineIndex = epub->getSpineItemsCount();
       lastPageTurnTime = millis();
-      pageTurnedSinceRsvp = true;
+      markExplicitPagedNavigation();
       return true;
     }
   } else {
     if (section->currentPage > 0) {
       section->currentPage--;
       lastPageTurnTime = millis();
-      pageTurnedSinceRsvp = true;
+      markExplicitPagedNavigation();
       return true;
     } else if (currentSpineIndex > 0) {
       RenderLock lock;
@@ -1102,7 +1107,7 @@ bool EpubReaderActivity::pageTurn(bool isForwardTurn) {
       currentSpineIndex--;
       section.reset();
       lastPageTurnTime = millis();
-      pageTurnedSinceRsvp = true;
+      markExplicitPagedNavigation();
       return true;
     }
   }
@@ -1116,26 +1121,43 @@ bool EpubReaderActivity::skipPages(int amount) {
     nextPageNumber = 0;
     currentSpineIndex++;
     section.reset();
-    pageTurnedSinceRsvp = true;
+    markExplicitPagedNavigation();
     return true;
   } else {
     if (section->currentPage > 0) {
       section->currentPage = 0;
-      pageTurnedSinceRsvp = true;
+      markExplicitPagedNavigation();
       return true;
     } else if (currentSpineIndex > 0) {
       RenderLock lock;
       nextPageNumber = 0;
       currentSpineIndex--;
       section.reset();
-      pageTurnedSinceRsvp = true;
+      markExplicitPagedNavigation();
       return true;
     }
   }
   return false;
 }
 
+void EpubReaderActivity::markExplicitPagedNavigation() {
+  if (pagedResumeIntent == PagedResumeIntent::ExplicitNavigation && !rsvpCheckpointInvalidationPending) return;
+  pagedResumeIntent = PagedResumeIntent::ExplicitNavigation;
+  retryRsvpCheckpointInvalidation();
+}
+
+void EpubReaderActivity::retryRsvpCheckpointInvalidation() {
+  if (!epub) return;
+  rsvpCheckpointInvalidationPending = !rsvp::RsvpCheckpointFile::invalidate(epub->getCachePath());
+  if (rsvpCheckpointInvalidationPending) {
+    LOG_ERR("ERS", "Failed to invalidate superseded RSVP checkpoint");
+  }
+}
+
 void EpubReaderActivity::switchToRsvp() {
+  if (pagedResumeIntent == PagedResumeIntent::ExplicitNavigation && rsvpCheckpointInvalidationPending) {
+    retryRsvpCheckpointInvalidation();
+  }
   rsvp::ResumeAnchor pageStartAnchor;
   if (section && section->currentPage >= 0 && section->currentPage < section->pageCount) {
     const auto offset = section->getVisibleTextOffsetForPage(static_cast<uint16_t>(section->currentPage));
@@ -1156,19 +1178,23 @@ void EpubReaderActivity::switchToRsvp() {
     return;
   }
 
-  bool stillOnLastRsvpPage = false;
-  if (!pageTurnedSinceRsvp && launchContext.anchor.valid &&
-      launchContext.anchor.spineIndex == static_cast<uint16_t>(currentSpineIndex)) {
-    const auto anchorPage = section->getPageForVisibleTextOffset(launchContext.anchor.visibleTextOffset);
-    stillOnLastRsvpPage = anchorPage.has_value() && *anchorPage == section->currentPage;
-  }
-  const auto decision = rsvp::RsvpModeSwitch::fromPaged(
-      {.currentAnchor = launchContext.anchor, .pageStartAnchor = pageStartAnchor, .pageTurned = !stillOnLastRsvpPage});
+  const auto decision =
+      rsvp::RsvpModeSwitch::fromPaged({.currentAnchor = launchContext.anchor,
+                                       .pageStartAnchor = pageStartAnchor,
+                                       .explicitNavigation = pagedResumeIntent == PagedResumeIntent::ExplicitNavigation,
+                                       .checkpointRestoreSuppressed = rsvpCheckpointInvalidationPending});
   rsvpSwitchPending = false;
-  activityManager.goToReader(bookPath, false, ReaderLaunchContext{ReaderLaunchMode::Rsvp, decision.anchor});
+  activityManager.goToReader(
+      bookPath, false,
+      ReaderLaunchContext{ReaderLaunchMode::Rsvp, decision.anchor, false, 0, 0, decision.restoreCheckpoint});
 }
 
 bool EpubReaderActivity::isAtEndOfBook() const { return epub && currentSpineIndex >= epub->getSpineItemsCount(); }
+
+void EpubReaderActivity::onExit() {
+  if (rsvpCheckpointInvalidationPending) retryRsvpCheckpointInvalidation();
+  ReaderActivity::onExit();
+}
 
 void EpubReaderActivity::onReturnFromEndOfBook() {
   if (epub && epub->getSpineItemsCount() > 0) {
@@ -2221,6 +2247,7 @@ void EpubReaderActivity::handleOverlayInput() {
     const int spineCount = epub->getSpineItemsCount();
     target = std::clamp(target, 0, spineCount - 1);
     if (target != currentSpineIndex) {
+      markExplicitPagedNavigation();
       RenderLock lock;
       clearDeferredReposition();
       nextPageNumber = 0;
@@ -2328,6 +2355,7 @@ void EpubReaderActivity::handleOverlayInput() {
     } else if (overlay == Overlay::Contents) {
       const auto item = epub->getTocItem(panelIndex);
       if (item.spineIndex != -1) {
+        markExplicitPagedNavigation();
         RenderLock lock;
         clearDeferredReposition();
         currentSpineIndex = item.spineIndex;
@@ -2621,6 +2649,7 @@ void EpubReaderActivity::navigateToHref(const std::string& hrefStr, const bool s
     return;
   }
 
+  markExplicitPagedNavigation();
   {
     RenderLock lock;
     clearDeferredReposition();

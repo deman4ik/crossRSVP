@@ -30,8 +30,10 @@ class EpubReaderActivity final : public ReaderActivity {
   std::optional<uint32_t> cachedVisibleTextOffset;
   std::optional<uint32_t> currentPageVisibleOffset;
   std::optional<uint32_t> pendingOffsetJump;
-  bool pageTurnedSinceRsvp = false;
+  enum class PagedResumeIntent : uint8_t { CheckpointEligible, ExplicitNavigation };
+  PagedResumeIntent pagedResumeIntent = PagedResumeIntent::CheckpointEligible;
   bool rsvpSwitchPending = false;
+  bool rsvpCheckpointInvalidationPending = false;
   bool highlightPending = false;
   unsigned long lastPageTurnTime = 0UL;
   unsigned long pageTurnDuration = 0UL;
@@ -158,6 +160,8 @@ class EpubReaderActivity final : public ReaderActivity {
   std::string moreRowValue(int row) const;
   void activateMoreRow(int row);
   void openDictionaryWordSelect();
+  void markExplicitPagedNavigation();
+  void retryRsvpCheckpointInvalidation();
   void switchToRsvp();
   bool launchKOReaderSync();
   unsigned long confirmLongPressThreshold() const;
@@ -192,10 +196,12 @@ class EpubReaderActivity final : public ReaderActivity {
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath,
                               bool allowFastInitialRefresh, ReaderLaunchContext launchContext = {})
       : ReaderActivity("EpubReader", renderer, mappedInput, std::move(bookPath), allowFastInitialRefresh,
-                       launchContext) {}
+                       launchContext),
+        rsvpCheckpointInvalidationPending(launchContext.checkpointInvalidationPending) {}
   ~EpubReaderActivity() override;
 
   void loop() override;
+  void onExit() override;
 
   bool pageTurn(bool isForward) override;
   bool skipPages(int amount) override;

@@ -36,6 +36,8 @@ class RsvpReaderActivity final : public ReaderActivity {
   void drawStatus() const;
   const char* pauseMessage() const;
   bool saveCheckpoint();
+  bool saveNativeProgress(const rsvp::ResumeAnchor& anchor);
+  bool finalizeCompletedBook();
   void switchToPaged();
   bool enterFatalFallback(rsvp::Error error);
 
@@ -49,6 +51,7 @@ class RsvpReaderActivity final : public ReaderActivity {
   bool switchToNativeProgress = false;
   bool invalidateCheckpointOnNativeFallback = false;
   bool checkpointWritesDisabled = false;
+  bool completionFinalized = false;
   uint64_t bookRevision = 0;
   uint64_t restoredActiveRsvpTimeMs = 0;
   rsvp::ResumeAnchor lastNativeProgressAnchor;

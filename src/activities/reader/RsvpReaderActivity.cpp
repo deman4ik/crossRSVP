@@ -94,7 +94,7 @@ bool RsvpReaderActivity::loadBook() {
     LOG_ERR("RSVP", "Unable to compute Book Revision; returning to native Paged progress");
     switchToPagedPending = true;
     switchToNativeProgress = true;
-  } else if (!initialAnchor.valid) {
+  } else if (launchContext.restoreCheckpoint || !initialAnchor.valid) {
     rsvp::RsvpCheckpoint checkpoint;
     const auto checkpointStatus = rsvp::RsvpCheckpointFile::load(epub->getCachePath(), bookRevision, checkpoint);
     if (checkpointStatus == rsvp::CheckpointStatus::Ok) {
@@ -135,8 +135,8 @@ bool RsvpReaderActivity::loadBook() {
   }
 
   currentDecision = session->step({.nowMs = millis()});
-  if (restoredFromCheckpoint && (!currentDecision.render || session->currentTokenHash() != restoredTokenHash32 ||
-                                 session->currentTokenLength() != restoredTokenLength)) {
+  if (restoredFromCheckpoint && (!currentDecision.render || session->requestedTokenHash() != restoredTokenHash32 ||
+                                 session->requestedTokenLength() != restoredTokenLength)) {
     LOG_INF("RSVP", "Checkpoint token identity no longer resolves; returning to Paged progress");
     currentDecision = {};
     switchToPagedPending = true;
@@ -220,6 +220,9 @@ void RsvpReaderActivity::loop() {
       LOG_ERR("RSVP", "Failed to save RSVP checkpoint");
     }
     applyDecision(decision);
+    if (decision.state == rsvp::State::Finished && !finalizeCompletedBook()) {
+      LOG_ERR("RSVP", "Failed to finalize completed book progress");
+    }
   }
   if (decision.state == rsvp::State::Error) {
     fatalFallbackPending.store(true, std::memory_order_release);
@@ -254,7 +257,12 @@ bool RsvpReaderActivity::saveCheckpoint() {
       .activeRsvpTimeMs = restoredActiveRsvpTimeMs + session->activeReadingMs(),
   };
   const bool checkpointSaved = rsvp::RsvpCheckpointFile::save(epub->getCachePath(), checkpoint);
-  if (!checkpointSaved) return false;
+  const bool progressSaved = saveNativeProgress(anchor);
+  return checkpointSaved && progressSaved;
+}
+
+bool RsvpReaderActivity::saveNativeProgress(const rsvp::ResumeAnchor& anchor) {
+  if (!epub || !anchor.valid) return false;
   if (lastNativeProgressAnchor.valid && lastNativeProgressAnchor.spineIndex == anchor.spineIndex &&
       lastNativeProgressAnchor.visibleTextOffset == anchor.visibleTextOffset) {
     return true;
@@ -267,13 +275,28 @@ bool RsvpReaderActivity::saveCheckpoint() {
   return progressSaved;
 }
 
+bool RsvpReaderActivity::finalizeCompletedBook() {
+  if (completionFinalized) return true;
+  if (!session || !epub) return false;
+  const auto anchor = session->currentAnchor();
+  if (!saveNativeProgress(anchor)) return false;
+  if (!rsvp::RsvpCheckpointFile::invalidate(epub->getCachePath())) return false;
+  checkpointWritesDisabled = true;
+  completionFinalized = true;
+  return true;
+}
+
 void RsvpReaderActivity::switchToPaged() {
   if (switchToNativeProgress) {
     checkpointWritesDisabled = true;
+    bool checkpointInvalidationPending = false;
     if (epub && invalidateCheckpointOnNativeFallback) {
-      rsvp::RsvpCheckpointFile::invalidate(epub->getCachePath());
+      checkpointInvalidationPending = !rsvp::RsvpCheckpointFile::invalidate(epub->getCachePath());
+      if (checkpointInvalidationPending) LOG_ERR("RSVP", "Failed to invalidate rejected RSVP checkpoint");
     }
-    activityManager.goToReader(bookPath, false, ReaderLaunchContext{ReaderLaunchMode::Paged});
+    activityManager.goToReader(
+        bookPath, false,
+        ReaderLaunchContext{ReaderLaunchMode::Paged, {}, false, 0, 0, false, checkpointInvalidationPending});
     return;
   }
   const auto anchor = session ? session->currentAnchor() : rsvp::ResumeAnchor{};
@@ -287,7 +310,11 @@ void RsvpReaderActivity::switchToPaged() {
 }
 
 void RsvpReaderActivity::onExit() {
-  if (!checkpointWritesDisabled) saveCheckpoint();
+  if (currentDecision.state == rsvp::State::Finished) {
+    if (!finalizeCompletedBook()) LOG_ERR("RSVP", "Failed to finalize completed book on exit");
+  } else if (!checkpointWritesDisabled) {
+    saveCheckpoint();
+  }
   ReaderActivity::onExit();
 }
 
