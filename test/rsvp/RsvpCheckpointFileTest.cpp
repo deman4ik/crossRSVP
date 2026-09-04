@@ -102,6 +102,17 @@ TEST_F(RsvpCheckpointFileTest, ExistingButUnreadableCheckpointIsNotReportedAsMis
             rsvp::CheckpointStatus::ReadError);
 }
 
+TEST_F(RsvpCheckpointFileTest, ExistsRecognizesPrimaryAndRecoverableBackup) {
+  EXPECT_FALSE(rsvp::RsvpCheckpointFile::exists(directory.string()));
+
+  const auto value = checkpoint(10);
+  ASSERT_TRUE(rsvp::RsvpCheckpointFile::save(directory.string(), value));
+  EXPECT_TRUE(rsvp::RsvpCheckpointFile::exists(directory.string()));
+
+  ASSERT_EQ(std::rename(path().c_str(), backup().c_str()), 0);
+  EXPECT_TRUE(rsvp::RsvpCheckpointFile::exists(directory.string()));
+}
+
 TEST_F(RsvpCheckpointFileTest, InvalidationRemovesEveryCheckpointGeneration) {
   const auto value = checkpoint(10);
   ASSERT_TRUE(rsvp::RsvpCheckpointFile::save(directory.string(), value));

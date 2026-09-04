@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Run repeatable CrossRSVP v0.2 scenarios in the X3 simulator."""
+"""Run repeatable CrossRSVP v0.2.1 scenarios in the X3 simulator."""
 
 from __future__ import annotations
 
@@ -33,6 +33,8 @@ class Scenario:
     quick_rsvp: bool = False
     pace_wpm: int = 100
     refresh_latency_ms: int = 0
+    input_script_after_wake: str = ""
+    screenshots_after_wake: dict[int, str] | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -46,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=REPO_ROOT / "artifacts" / "rsvp-x3-v0.2" / "simulator",
+        default=REPO_ROOT / "artifacts" / "rsvp-x3-v0.2.1" / "simulator",
         help="directory for logs and BMP screenshots",
     )
     parser.add_argument(
@@ -134,6 +136,8 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
     log_path.unlink(missing_ok=True)
     for filename in scenario.screenshots.values():
         (output / filename).unlink(missing_ok=True)
+    for filename in (scenario.screenshots_after_wake or {}).values():
+        (output / filename).unlink(missing_ok=True)
 
     with tempfile.TemporaryDirectory(prefix=f"crossrsvp-{scenario.name}-") as temp:
         run_root = Path(temp)
@@ -153,6 +157,12 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
             env["CROSSPOINT_SIM_DISPLAY_REFRESH_MS"] = str(scenario.refresh_latency_ms)
         if scenario.fatal_load:
             env["CROSSPOINT_SIM_RSVP_FATAL_LOAD"] = "1"
+        if scenario.input_script_after_wake:
+            env["CROSSPOINT_SIM_INPUT_SCRIPT_AFTER_WAKE"] = scenario.input_script_after_wake
+        if scenario.screenshots_after_wake:
+            env["CROSSPOINT_SIM_SCREENSHOTS_AFTER_WAKE"] = screenshot_schedule(
+                output, scenario.screenshots_after_wake
+            )
 
         completed = subprocess.run(
             [str(program)],
@@ -240,6 +250,10 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
             width, height = bmp_dimensions(path)
             if width <= 0 or height <= 0:
                 raise RuntimeError(f"{scenario.name}: invalid screenshot dimensions {width}x{height}")
+        for filename in (scenario.screenshots_after_wake or {}).values():
+            path = output / filename
+            if not path.is_file() or path.stat().st_size <= 54:
+                raise RuntimeError(f"{scenario.name}: missing after-wake screenshot {path}")
 
 
 def validate_flow_screenshots(output: Path) -> None:
@@ -275,6 +289,13 @@ def validate_boundary_skip_screenshots(output: Path) -> None:
     skipped = output / "boundary-image-skipped.bmp"
     if filecmp.cmp(boundary, skipped, shallow=False):
         raise RuntimeError("boundary-image: PageForward did not replace the boundary prompt with the next word")
+
+
+def validate_reopened_highlight(output: Path) -> None:
+    after_exit = output / "highlight-after-exit.bmp"
+    after_reopen = output / "highlight-after-reopen.bmp"
+    if not filecmp.cmp(after_exit, after_reopen, shallow=False):
+        raise RuntimeError("highlight-reopen: reopening Paged did not restore the active-word highlight")
 
 
 def scenarios() -> list[Scenario]:
@@ -332,6 +353,14 @@ def scenarios() -> list[Scenario]:
             pace_wpm=240,
             refresh_latency_ms=450,
         ),
+        Scenario(
+            name="highlight-reopen",
+            orientation=0,
+            input_script=f"{enter_rsvp};5000:ENTER;6200:ENTER;7600:BACK;9000:SLEEP;11000:ENTER",
+            screenshots={8400: "highlight-after-exit.bmp"},
+            input_script_after_wake="5000:QUIT",
+            screenshots_after_wake={3500: "highlight-after-reopen.bmp"},
+        ),
         *[
             Scenario(
                 name=f"orientation-{orientation}",
@@ -384,6 +413,8 @@ def main() -> int:
             validate_flow_screenshots(output)
         if any(scenario.name == "boundary-image" for scenario in selected):
             validate_boundary_skip_screenshots(output)
+        if any(scenario.name == "highlight-reopen" for scenario in selected):
+            validate_reopened_highlight(output)
         if {scenario.name for scenario in selected}.issuperset({f"orientation-{orientation}" for orientation in range(4)}):
             validate_orientation_screenshots(output)
 

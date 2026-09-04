@@ -207,6 +207,21 @@ bool EpubReaderActivity::loadBook() {
 
   epub->setupCacheDir();
 
+  if (!launchContext.anchor.valid && !launchContext.checkpointInvalidationPending &&
+      rsvp::RsvpCheckpointFile::exists(epub->getCachePath())) {
+    uint64_t bookRevision = 0;
+    rsvp::RsvpCheckpoint checkpoint;
+    if (rsvp::RsvpCheckpointFile::computeBookRevision(bookPath, bookRevision) &&
+        rsvp::RsvpCheckpointFile::load(epub->getCachePath(), bookRevision, checkpoint) == rsvp::CheckpointStatus::Ok) {
+      launchContext.anchor = checkpoint.anchor;
+      launchContext.temporaryHighlight = true;
+      launchContext.tokenHash32 = checkpoint.tokenHash32;
+      launchContext.tokenLength = checkpoint.tokenLength;
+      launchContext.restoreCheckpoint = true;
+      launchContext.bookRevision = bookRevision;
+    }
+  }
+
   bool loadedProgress = false;
   HalFile f;
   if (Storage.openFileForRead("ERS", epub->getCachePath() + "/progress.bin", f)) {
@@ -1143,6 +1158,7 @@ bool EpubReaderActivity::skipPages(int amount) {
 void EpubReaderActivity::markExplicitPagedNavigation() {
   if (pagedResumeIntent == PagedResumeIntent::ExplicitNavigation && !rsvpCheckpointInvalidationPending) return;
   pagedResumeIntent = PagedResumeIntent::ExplicitNavigation;
+  highlightPending = false;
   retryRsvpCheckpointInvalidation();
 }
 
@@ -1183,10 +1199,13 @@ void EpubReaderActivity::switchToRsvp() {
                                        .pageStartAnchor = pageStartAnchor,
                                        .explicitNavigation = pagedResumeIntent == PagedResumeIntent::ExplicitNavigation,
                                        .checkpointRestoreSuppressed = rsvpCheckpointInvalidationPending});
+  const bool restoreCheckpoint =
+      decision.restoreCheckpoint ||
+      (launchContext.restoreCheckpoint && pagedResumeIntent != PagedResumeIntent::ExplicitNavigation);
   rsvpSwitchPending = false;
-  activityManager.goToReader(
-      bookPath, false,
-      ReaderLaunchContext{ReaderLaunchMode::Rsvp, decision.anchor, false, 0, 0, decision.restoreCheckpoint});
+  activityManager.goToReader(bookPath, false,
+                             ReaderLaunchContext{ReaderLaunchMode::Rsvp, decision.anchor, false, 0, 0,
+                                                 restoreCheckpoint, false, launchContext.bookRevision});
 }
 
 bool EpubReaderActivity::isAtEndOfBook() const { return epub && currentSpineIndex >= epub->getSpineItemsCount(); }
@@ -1500,7 +1519,6 @@ void EpubReaderActivity::renderBook() {
 
     const auto start = millis();
     renderContents(std::move(p), orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
-    highlightPending = false;
     LOG_DBG("ERS", "Rendered page in %dms", millis() - start);
     lastRenderCompleteMs = millis();
   }
@@ -1670,11 +1688,15 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
 
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
   renderStatusBar();
-  if (oneShotHighlight && !drawTemporaryHighlight(*page, fontId, orientedMarginTop, orientedMarginLeft)) {
-    LOG_ERR("ERS", "Unable to locate RSVP highlight at spine=%u offset=%lu ordinal=%u",
-            static_cast<unsigned>(launchContext.anchor.spineIndex),
-            static_cast<unsigned long>(launchContext.anchor.visibleTextOffset),
-            static_cast<unsigned>(launchContext.anchor.sameOffsetOrdinal));
+  if (oneShotHighlight) {
+    if (drawTemporaryHighlight(*page, fontId, orientedMarginTop, orientedMarginLeft)) {
+      highlightPending = false;
+    } else {
+      LOG_ERR("ERS", "Unable to locate RSVP highlight at spine=%u offset=%lu ordinal=%u",
+              static_cast<unsigned>(launchContext.anchor.spineIndex),
+              static_cast<unsigned long>(launchContext.anchor.visibleTextOffset),
+              static_cast<unsigned>(launchContext.anchor.sameOffsetOrdinal));
+    }
   }
   const auto tBwRender = millis();
 

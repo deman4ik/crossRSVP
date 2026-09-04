@@ -9,6 +9,7 @@ namespace rsvp {
 
 class RsvpCheckpointFile final {
  public:
+  static bool exists(const std::string& cachePath);
   static bool computeBookRevision(const std::string& bookPath, uint64_t& revision);
   static CheckpointStatus load(const std::string& cachePath, uint64_t expectedRevision, RsvpCheckpoint& checkpoint);
   static bool save(const std::string& cachePath, const RsvpCheckpoint& checkpoint);

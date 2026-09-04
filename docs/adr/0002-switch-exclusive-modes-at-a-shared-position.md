@@ -10,7 +10,8 @@ The required X3 paths are a discoverable reader-menu action and an optional dire
 
 ## Consequences
 
-- Reopening a book starts in Paged Mode; RSVP must be entered explicitly.
+- Reopening a book starts in Paged Mode and highlights a valid saved RSVP Active Word; RSVP must still be entered
+  explicitly.
 - Paged and RSVP persistence must reconcile through a semantic Resume Anchor rather than overwrite each other's native progress records.
 - The RSVP renderer presents one word per frame, aligns a bold ORP letter between fixed guide marks, and accepts a requested 60–240 WPM range on X3. Blocking refresh time remains part of each interval, so the panel sets the observable ceiling without token skipping.
 - Russian-aware punctuation pauses are enabled by default: clause boundaries use `1.5×`, sentence boundaries `2×`, and paragraph boundaries `2.5×` the base interval.

@@ -1,6 +1,8 @@
 #include "RsvpCheckpointFile.h"
 
 #include <HalStorage.h>
+#include <Logging.h>
+#include <Memory.h>
 
 #include <array>
 
@@ -33,6 +35,11 @@ bool sameCheckpoint(const RsvpCheckpoint& left, const RsvpCheckpoint& right) {
 
 }  // namespace
 
+bool RsvpCheckpointFile::exists(const std::string& cachePath) {
+  const std::string path = checkpointPath(cachePath);
+  return Storage.exists(path.c_str()) || Storage.exists((path + ".bak").c_str());
+}
+
 bool RsvpCheckpointFile::computeBookRevision(const std::string& bookPath, uint64_t& revision) {
   HalFile file;
   if (!Storage.openFileForRead("RSVP", bookPath, file)) return false;
@@ -40,9 +47,14 @@ bool RsvpCheckpointFile::computeBookRevision(const std::string& bookPath, uint64
   // FNV-1a over the complete EPUB makes replacement at the same path stale,
   // including changes not represented by file size or timestamps.
   uint64_t hash = 14695981039346656037ULL;
-  std::array<uint8_t, 1024> buffer{};
+  constexpr size_t BUFFER_SIZE = 1024;
+  auto buffer = makeUniqueNoThrow<uint8_t[]>(BUFFER_SIZE);
+  if (!buffer) {
+    LOG_ERR("RSVP", "OOM: %u-byte book revision buffer", static_cast<unsigned>(BUFFER_SIZE));
+    return false;
+  }
   while (true) {
-    const int count = file.read(buffer.data(), buffer.size());
+    const int count = file.read(buffer.get(), BUFFER_SIZE);
     if (count < 0) return false;
     if (count == 0) break;
     for (int index = 0; index < count; ++index) {

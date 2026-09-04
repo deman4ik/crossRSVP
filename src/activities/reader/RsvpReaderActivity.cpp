@@ -90,7 +90,8 @@ bool RsvpReaderActivity::loadBook() {
   epub = std::move(loadedEpub);
 
   rsvp::ResumeAnchor initialAnchor = launchContext.anchor;
-  if (!rsvp::RsvpCheckpointFile::computeBookRevision(bookPath, bookRevision)) {
+  bookRevision = launchContext.bookRevision;
+  if (bookRevision == 0 && !rsvp::RsvpCheckpointFile::computeBookRevision(bookPath, bookRevision)) {
     LOG_ERR("RSVP", "Unable to compute Book Revision; returning to native Paged progress");
     switchToPagedPending = true;
     switchToNativeProgress = true;
@@ -296,7 +297,8 @@ void RsvpReaderActivity::switchToPaged() {
     }
     activityManager.goToReader(
         bookPath, false,
-        ReaderLaunchContext{ReaderLaunchMode::Paged, {}, false, 0, 0, false, checkpointInvalidationPending});
+        ReaderLaunchContext{
+            ReaderLaunchMode::Paged, {}, false, 0, 0, false, checkpointInvalidationPending, bookRevision});
     return;
   }
   const auto anchor = session ? session->currentAnchor() : rsvp::ResumeAnchor{};
@@ -306,7 +308,7 @@ void RsvpReaderActivity::switchToPaged() {
       bookPath, false,
       ReaderLaunchContext{ReaderLaunchMode::Paged, decision.anchor, decision.temporaryHighlight && anchor.valid,
                           session ? session->currentTokenHash() : 0,
-                          session ? session->currentTokenLength() : uint16_t{0}});
+                          session ? session->currentTokenLength() : uint16_t{0}, false, false, bookRevision});
 }
 
 void RsvpReaderActivity::onExit() {
