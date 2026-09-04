@@ -354,6 +354,24 @@ TEST(RsvpFixture, RealEpubChapterFlowsFromSourceToPausedFirstToken) {
   EXPECT_EQ(decision.frame.anchor.visibleTextOffset, 0u);
 }
 
+TEST(RsvpFixture, RealEpubContextReadAheadKeepsRussianOrderWithoutLogicalProgress) {
+  StoredFixtureEpubProvider provider(RSVP_FIXTURE_EPUB);
+  rsvp::EpubVisibleTextSource source(provider);
+  rsvp::RsvpSession session(source, {}, {}, true);
+
+  const auto decision = session.step({});
+
+  ASSERT_TRUE(decision.render);
+  ASSERT_NE(decision.frame.contextWindow, nullptr);
+  ASSERT_EQ(decision.frame.contextWindow->activeIndex, 0u);
+  ASSERT_EQ(decision.frame.contextWindow->count, 4u);
+  EXPECT_STREQ(decision.frame.contextWindow->tokens[0].text, "Первое");
+  EXPECT_STREQ(decision.frame.contextWindow->tokens[1].text, "русское");
+  EXPECT_STREQ(decision.frame.contextWindow->tokens[2].text, "слово");
+  EXPECT_STREQ(decision.frame.contextWindow->tokens[3].text, "«ёлка»,");
+  EXPECT_FALSE(session.currentAnchor().valid);
+}
+
 TEST(EpubVisibleTextSource, EmitsChapterBoundaryWithoutCollectingSpines) {
   StringEpubProvider provider({"<body>один</body>", "<body>два</body>"});
   rsvp::EpubVisibleTextSource source(provider);

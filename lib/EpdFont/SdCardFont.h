@@ -70,9 +70,32 @@ class SdCardFont {
   // extraText: optional additional codepoints to warm in the same SD pass
   // (e.g. shaped Arabic presentation forms the measurement path will look up).
   // Returns number of codepoints not found in font coverage.
+  static constexpr size_t ADVANCE_BUILD_SCRATCH_CODEPOINTS = 256;
+  struct AdvanceBuildMapping {
+    uint32_t codepoint;
+    int32_t glyphIndex;
+  };
+  struct AdvanceBuildEntry {
+    uint32_t codepoint;
+    uint16_t advanceX;
+  };
+  struct AdvanceBuildScratch {
+    uint32_t codepoints[ADVANCE_BUILD_SCRATCH_CODEPOINTS + 2];
+    AdvanceBuildMapping mappings[ADVANCE_BUILD_SCRATCH_CODEPOINTS];
+    AdvanceBuildEntry staged[ADVANCE_BUILD_SCRATCH_CODEPOINTS];
+  };
   int buildAdvanceTable(const char* utf8Text, uint8_t styleMask = 0x0F, const char* extraText = nullptr);
+  int buildAdvanceTable(const char* const* utf8Texts, size_t textCount, uint8_t styleMask = 0x0F,
+                        const char* extraText = nullptr);
+  int buildAdvanceTable(const char* const* utf8Texts, size_t textCount, AdvanceBuildScratch& scratch,
+                        uint8_t styleMask = 0x0F, const char* extraText = nullptr);
   int buildAdvanceTable(const std::deque<std::string>& words, bool includeHyphen, uint8_t styleMask = 0x0F,
                         const char* extraText = nullptr);
+
+  // Reserve an advance table before a frame loop starts. The requested
+  // capacity is capped at the legacy persistent-table limit.
+  // Returns false if any requested present style cannot be allocated.
+  bool reserveAdvanceTable(uint8_t styleMask = 0x0F, uint32_t capacity = ADVANCE_BUILD_SCRATCH_CODEPOINTS);
 
   // Look up advanceX for a codepoint from the advance table.
   // Returns the 12.4 fixed-point advance, or 0 if not found.
@@ -287,10 +310,7 @@ class SdCardFont {
 
   // Compact advance-only table for layout measurement (per-style).
   // Built by buildAdvanceTable(), queried by getAdvance().
-  struct AdvanceEntry {
-    uint32_t codepoint;
-    uint16_t advanceX;  // 12.4 fixed-point
-  };
+  using AdvanceEntry = AdvanceBuildEntry;
   // Per-style advance table. Sorted by codepoint for binary lookup.
   // Bounded to ADVANCE_CACHE_LIMIT entries; persists across layout passes
   // (across calls to clearCache()) so repeated indexing of the same font
@@ -298,10 +318,11 @@ class SdCardFont {
   static constexpr uint32_t ADVANCE_CACHE_LIMIT = 768;
   AdvanceEntry* advanceTable_[MAX_STYLES] = {};
   uint32_t advanceTableSize_[MAX_STYLES] = {};
+  uint32_t advanceTableCapacity_[MAX_STYLES] = {};
   bool advanceTableLookup(uint8_t styleIdx, uint32_t codepoint, uint16_t* outAdvance) const;
   // Merge sortedNew (sorted by codepoint, no overlap with existing) into the
   // advance table for styleIdx, preserving sort order; cap-truncates the tail.
-  void mergeIntoAdvanceTable(uint8_t styleIdx, const AdvanceEntry* sortedNew, uint32_t newCount);
+  void mergeIntoAdvanceTable(uint8_t styleIdx, const AdvanceEntry* sortedNew, uint32_t newCount, bool allowInPlace);
 
   Stats stats_;
   uint32_t contentHash_ = 0;
@@ -321,10 +342,11 @@ class SdCardFont {
   void applyKernLigaturePointers(PerStyle& s, EpdFontData& data) const;
   void applyGlyphMissCallback(uint8_t styleIdx);
   int32_t findGlobalGlyphIndex(const PerStyle& s, uint32_t codepoint) const;
-  int fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCount, uint8_t styleMask);
+  int fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCount, uint8_t styleMask,
+                                 AdvanceBuildScratch* scratch = nullptr);
   template <typename Iter>
   int buildAdvanceTableRange(Iter begin, Iter end, bool includeSpace, bool includeHyphen, uint8_t styleMask,
-                             const char* extraText = nullptr);
+                             const char* extraText = nullptr, AdvanceBuildScratch* scratch = nullptr);
   int prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint32_t cpCount, bool metadataOnly, bool loadKernLig);
 
   // Global helpers

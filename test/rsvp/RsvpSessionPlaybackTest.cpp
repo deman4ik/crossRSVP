@@ -255,7 +255,9 @@ TEST(RsvpSessionPlayback, PageForwardSkipsEachNonTextBoundaryAndShowsTheNextWord
     EXPECT_EQ(next.state, rsvp::State::Paused);
     EXPECT_EQ(next.pauseReason, rsvp::PauseReason::None);
     EXPECT_FALSE(next.pagedModeAvailable);
-    EXPECT_TRUE(next.checkpointRequested);
+    EXPECT_FALSE(next.checkpointRequested);
+    EXPECT_TRUE(session.step({.nowMs = 700, .action = rsvp::Action::FramePresented, .presentedFrameId = next.frame.id})
+                    .checkpointRequested);
   }
 }
 
@@ -431,7 +433,7 @@ TEST(RsvpSessionPlayback, CheckpointPolicyCoversPeriodicPauseAndModeSwitch) {
   EXPECT_EQ(session.currentAnchor().visibleTextOffset, 11u);
 }
 
-TEST(RsvpSessionPlayback, ManualPausedNavigationRequestsCheckpoint) {
+TEST(RsvpSessionPlayback, ManualPausedNavigationCheckpointsOnlyAfterPresentation) {
   VectorSource source({word("one", 0), word("two", 4), word("three", 8), marker(rsvp::EventKind::EndOfBook)});
   rsvp::RsvpSession session(source);
 
@@ -439,13 +441,19 @@ TEST(RsvpSessionPlayback, ManualPausedNavigationRequestsCheckpoint) {
   acknowledge(session, first, 0);
   const auto forward = session.step({.action = rsvp::Action::StepForward});
   EXPECT_EQ(session.currentAnchor().visibleTextOffset, 0U);
-  EXPECT_TRUE(forward.checkpointRequested);
-  acknowledge(session, forward, 0);
+  EXPECT_FALSE(forward.checkpointRequested);
+  const auto forwardPresented =
+      session.step({.action = rsvp::Action::FramePresented, .presentedFrameId = forward.frame.id});
+  EXPECT_TRUE(forwardPresented.presentationAccepted);
+  EXPECT_TRUE(forwardPresented.checkpointRequested);
   EXPECT_EQ(session.currentAnchor().visibleTextOffset, 4U);
 
   const auto rewind = session.step({.action = rsvp::Action::RewindFive});
-  EXPECT_TRUE(rewind.checkpointRequested);
-  acknowledge(session, rewind, 0);
+  EXPECT_FALSE(rewind.checkpointRequested);
+  const auto rewindPresented =
+      session.step({.action = rsvp::Action::FramePresented, .presentedFrameId = rewind.frame.id});
+  EXPECT_TRUE(rewindPresented.presentationAccepted);
+  EXPECT_TRUE(rewindPresented.checkpointRequested);
   EXPECT_EQ(session.currentAnchor().visibleTextOffset, 0U);
 }
 

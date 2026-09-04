@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Run repeatable CrossRSVP v0.2.1 scenarios in the X3 simulator."""
+"""Run repeatable CrossRSVP v0.3.0 scenarios in the X3 simulator."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ class Scenario:
     fixture_name: str = "default"
     quick_rsvp: bool = False
     pace_wpm: int = 100
+    context_line: bool = False
     refresh_latency_ms: int = 0
     input_script_after_wake: str = ""
     screenshots_after_wake: dict[int, str] | None = None
@@ -48,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=REPO_ROOT / "artifacts" / "rsvp-x3-v0.2.1" / "simulator",
+        default=REPO_ROOT / "artifacts" / "rsvp-x3-v0.3.0" / "simulator",
         help="directory for logs and BMP screenshots",
     )
     parser.add_argument(
@@ -68,7 +69,12 @@ def build_fixture(destination: Path) -> None:
 
 
 def write_simulator_state(
-    run_root: Path, fixture: Path, orientation: int, quick_rsvp: bool, pace_wpm: int
+    run_root: Path,
+    fixture: Path,
+    orientation: int,
+    quick_rsvp: bool,
+    pace_wpm: int,
+    context_line: bool,
 ) -> None:
     fs_root = run_root / "fs_"
     books = fs_root / "books"
@@ -85,6 +91,7 @@ def write_simulator_state(
         "rsvpFontSize": 14,
         "rsvpGuideStyle": 1,
         "rsvpPaceWpm": pace_wpm,
+        "rsvpContextLine": int(context_line),
         "screenInverted": 1,
         "uiTheme": 1,
     }
@@ -147,6 +154,7 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
             scenario.orientation,
             scenario.quick_rsvp,
             scenario.pace_wpm,
+            scenario.context_line,
         )
         env = os.environ.copy()
         env["CROSSPOINT_SIM_INPUT_SCRIPT"] = scenario.input_script
@@ -181,6 +189,8 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
             raise RuntimeError(f"{scenario.name}: X3 profile was not detected")
         if activity_entry_count(completed.stdout, "RsvpReader") == 0:
             raise RuntimeError(f"{scenario.name}: RSVP activity was not entered")
+        if scenario.context_line and "[RSVP] context-line=on" not in completed.stdout:
+            raise RuntimeError(f"{scenario.name}: Context Line setting was not applied")
         if scenario.fatal_load:
             required = "Injected simulator RSVP source-open failure"
             if required not in completed.stdout or activity_entry_count(completed.stdout, "EpubReader") < 2:
@@ -235,6 +245,16 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
                 raise RuntimeError(f"{scenario.name}: RSVP activity was not entered exactly once")
             if activity_entry_count(completed.stdout, "EpubReader") < 2:
                 raise RuntimeError(f"{scenario.name}: Back during refresh did not switch to Paged Mode")
+        if scenario.name == "context-playback":
+            frame_lines = [
+                line for line in completed.stdout.splitlines() if "[RSVP] refresh=fast" in line
+            ]
+            if len(frame_lines) < 6:
+                raise RuntimeError(
+                    f"{scenario.name}: playback did not produce enough context frames: {len(frame_lines)}"
+                )
+            if any("heap=65536" not in line for line in frame_lines):
+                raise RuntimeError(f"{scenario.name}: simulated heap changed during playback")
         expected_pause = {
             "boundary-image": "pause=image",
             "boundary-chapter": "pause=chapter",
@@ -276,10 +296,18 @@ def validate_flow_screenshots(output: Path) -> None:
 def validate_orientation_screenshots(output: Path) -> None:
     paths = [output / f"orientation-{orientation}-paused.bmp" for orientation in range(4)]
     expected_dimensions = [(528, 792), (792, 528), (528, 792), (792, 528)]
+    pixel_scale = None
     for path, expected in zip(paths, expected_dimensions):
         actual = bmp_dimensions(path)
-        if actual != expected:
-            raise RuntimeError(f"{path.name}: expected X3 orientation geometry {expected}, got {actual}")
+        if actual[0] % expected[0] != 0 or actual[1] % expected[1] != 0:
+            raise RuntimeError(f"{path.name}: expected scaled X3 geometry {expected}, got {actual}")
+        current_scale = actual[0] // expected[0]
+        if current_scale < 1 or actual[1] // expected[1] != current_scale:
+            raise RuntimeError(f"{path.name}: expected uniform X3 pixel scale, got {actual}")
+        if pixel_scale is None:
+            pixel_scale = current_scale
+        elif current_scale != pixel_scale:
+            raise RuntimeError("X3 orientation screenshots use inconsistent pixel scales")
     if filecmp.cmp(paths[0], paths[2], shallow=False) or filecmp.cmp(paths[1], paths[3], shallow=False):
         raise RuntimeError("opposite X3 orientations produced identical frames")
 
@@ -296,6 +324,13 @@ def validate_reopened_highlight(output: Path) -> None:
     after_reopen = output / "highlight-after-reopen.bmp"
     if not filecmp.cmp(after_exit, after_reopen, shallow=False):
         raise RuntimeError("highlight-reopen: reopening Paged did not restore the active-word highlight")
+
+
+def validate_context_line_screenshots(output: Path) -> None:
+    context_off = output / "context-off.bmp"
+    context_on = output / "context-playback.bmp"
+    if filecmp.cmp(context_off, context_on, shallow=False):
+        raise RuntimeError("context-playback: enabled Context Line did not change the rendered frame")
 
 
 def scenarios() -> list[Scenario]:
@@ -354,6 +389,19 @@ def scenarios() -> list[Scenario]:
             refresh_latency_ms=450,
         ),
         Scenario(
+            name="context-off",
+            orientation=0,
+            input_script=f"{enter_rsvp};4600:ENTER;11000:QUIT",
+            screenshots={9600: "context-off.bmp"},
+        ),
+        Scenario(
+            name="context-playback",
+            orientation=0,
+            input_script=f"{enter_rsvp};4600:ENTER;11000:QUIT",
+            screenshots={9600: "context-playback.bmp"},
+            context_line=True,
+        ),
+        Scenario(
             name="highlight-reopen",
             orientation=0,
             input_script=f"{enter_rsvp};5000:ENTER;6200:ENTER;7600:BACK;9000:SLEEP;11000:ENTER",
@@ -367,6 +415,7 @@ def scenarios() -> list[Scenario]:
                 orientation=orientation,
                 input_script=f"{enter_rsvp};5400:QUIT",
                 screenshots={4500: f"orientation-{orientation}-paused.bmp"},
+                context_line=True,
             )
             for orientation in range(4)
         ],
@@ -415,6 +464,8 @@ def main() -> int:
             validate_boundary_skip_screenshots(output)
         if any(scenario.name == "highlight-reopen" for scenario in selected):
             validate_reopened_highlight(output)
+        if {scenario.name for scenario in selected}.issuperset({"context-off", "context-playback"}):
+            validate_context_line_screenshots(output)
         if {scenario.name for scenario in selected}.issuperset({f"orientation-{orientation}" for orientation in range(4)}):
             validate_orientation_screenshots(output)
 

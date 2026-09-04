@@ -118,6 +118,36 @@ void GfxRenderer::ensureSdCardFontReady(int fontId, const char* utf8Text, uint8_
   }
 }
 
+void GfxRenderer::ensureSdCardFontReady(int fontId, const char* const* utf8Texts, const size_t textCount,
+                                        const uint8_t styleMask) const {
+  auto it = sdCardFonts_.find(fontId);
+  if (it == sdCardFonts_.end()) return;
+
+  std::string shaped;
+  for (size_t index = 0; index < textCount; ++index) appendShapedRtlTokens(utf8Texts[index], shaped);
+  const int missed =
+      it->second->buildAdvanceTable(utf8Texts, textCount, styleMask, shaped.empty() ? nullptr : shaped.c_str());
+  if (missed > 0) LOG_DBG("GFX", "ensureSdCardFontReady: %d glyph(s) not found", missed);
+}
+
+void GfxRenderer::ensureSdCardFontReady(int fontId, const char* const* utf8Texts, const size_t textCount,
+                                        SdCardFont::AdvanceBuildScratch& scratch, const uint8_t styleMask) const {
+  auto it = sdCardFonts_.find(fontId);
+  if (it == sdCardFonts_.end()) return;
+
+  std::string shaped;
+  for (size_t index = 0; index < textCount; ++index) appendShapedRtlTokens(utf8Texts[index], shaped);
+  const int missed = it->second->buildAdvanceTable(utf8Texts, textCount, scratch, styleMask,
+                                                   shaped.empty() ? nullptr : shaped.c_str());
+  if (missed > 0) LOG_DBG("GFX", "ensureSdCardFontReady: %d glyph(s) not found", missed);
+}
+
+bool GfxRenderer::reserveSdCardFontAdvanceTable(const int fontId, const uint8_t styleMask,
+                                                const uint32_t capacity) const {
+  auto it = sdCardFonts_.find(fontId);
+  return it == sdCardFonts_.end() || it->second->reserveAdvanceTable(styleMask, capacity);
+}
+
 void GfxRenderer::ensureSdCardFontReady(int fontId, const std::deque<std::string>& words, bool includeHyphen,
                                         uint8_t styleMask) const {
   auto it = sdCardFonts_.find(fontId);

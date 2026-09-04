@@ -129,11 +129,43 @@ bool RsvpReaderActivity::loadBook() {
   pacing.clausePausePercent = static_cast<uint16_t>(SETTINGS.rsvpClausePauseTenths) * 10;
   pacing.sentencePausePercent = static_cast<uint16_t>(SETTINGS.rsvpSentencePauseTenths) * 10;
   pacing.paragraphPausePercent = static_cast<uint16_t>(SETTINGS.rsvpParagraphPauseTenths) * 10;
-  session = makeUniqueNoThrow<rsvp::RsvpSession>(*source, initialAnchor, pacing);
+  bool contextLineEnabled = SETTINGS.rsvpContextLine != 0;
+  bool contextUsesSdFont = false;
+  if (contextLineEnabled) {
+    for (int pointSize = SETTINGS.rsvpFontSize; pointSize >= CrossPointSettings::RSVP_FONT_SIZE_MIN;
+         pointSize -= CrossPointSettings::RSVP_FONT_SIZE_STEP) {
+      if (renderer.isSdCardFont(SETTINGS.getReaderFontIdAtSize(static_cast<uint8_t>(pointSize)))) {
+        contextUsesSdFont = true;
+        break;
+      }
+    }
+  }
+  if (contextLineEnabled && contextUsesSdFont) {
+    // Keep the SD advance collector and bounded tables alive for the activity
+    // so Context Line frames do not allocate advance buffers.
+    sdFontAdvanceScratch = makeUniqueNoThrow<SdCardFont::AdvanceBuildScratch>();
+    if (!sdFontAdvanceScratch) {
+      LOG_ERR("RSVP", "OOM: SD font Context Line scratch");
+      contextLineEnabled = false;
+    } else {
+      for (int pointSize = SETTINGS.rsvpFontSize; pointSize >= CrossPointSettings::RSVP_FONT_SIZE_MIN;
+           pointSize -= CrossPointSettings::RSVP_FONT_SIZE_STEP) {
+        const int fontId = SETTINGS.getReaderFontIdAtSize(static_cast<uint8_t>(pointSize));
+        if (!renderer.reserveSdCardFontAdvanceTable(fontId, 0x03, SdCardFont::ADVANCE_BUILD_SCRATCH_CODEPOINTS)) {
+          LOG_ERR("RSVP", "OOM: SD font Context Line advance table");
+          sdFontAdvanceScratch.reset();
+          contextLineEnabled = false;
+          break;
+        }
+      }
+    }
+  }
+  session = makeUniqueNoThrow<rsvp::RsvpSession>(*source, initialAnchor, pacing, contextLineEnabled);
   if (!session) {
     LOG_ERR("RSVP", "Failed to allocate session");
     return enterFatalFallback(rsvp::Error::SourceOpen);
   }
+  LOG_INF("RSVP", "context-line=%s", contextLineEnabled ? "on" : "off");
 
   currentDecision = session->step({.nowMs = millis()});
   if (restoredFromCheckpoint && (!currentDecision.render || session->requestedTokenHash() != restoredTokenHash32 ||
@@ -280,7 +312,7 @@ bool RsvpReaderActivity::finalizeCompletedBook() {
   if (completionFinalized) return true;
   if (!session || !epub) return false;
   const auto anchor = session->currentAnchor();
-  if (!saveNativeProgress(anchor)) return false;
+  if (anchor.valid && !saveNativeProgress(anchor)) return false;
   if (!rsvp::RsvpCheckpointFile::invalidate(epub->getCachePath())) return false;
   checkpointWritesDisabled = true;
   completionFinalized = true;
@@ -347,7 +379,7 @@ bool copyRange(const rsvp::PreparedWord& word, const uint16_t begin, const uint1
 }
 }  // namespace
 
-bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word) {
+bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word, const rsvp::ContextWindow* context) {
   if (!word.valid || !copyRange(word, 0, word.pivot.begin, prefixBuffer) ||
       !copyRange(word, word.pivot.begin, word.pivot.end, pivotBuffer) ||
       !copyRange(word, word.pivot.end, word.textLength, suffixBuffer)) {
@@ -363,25 +395,78 @@ bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word) {
   const int right = renderer.getScreenWidth() - marginRight - 12;
   const int focusX = left + (right - left) / 2;
 
-  rsvp::RsvpWordLayout layout;
+  const char* frameText[rsvp::CONTEXT_WINDOW_CAPACITY] = {word.text};
+  size_t frameTextCount = 1;
+  if (context && context->activeIndex < context->count) {
+    frameTextCount = context->count;
+    for (uint8_t index = 0; index < context->count; ++index) frameText[index] = context->tokens[index].text;
+  }
+
+  rsvp::RsvpWordLayout activeLayout;
   int fontId = 0;
+  int resolvedPointSize = 0;
   for (int pointSize = SETTINGS.rsvpFontSize; pointSize >= CrossPointSettings::RSVP_FONT_SIZE_MIN;
        pointSize -= CrossPointSettings::RSVP_FONT_SIZE_STEP) {
     fontId = SETTINGS.getReaderFontIdAtSize(static_cast<uint8_t>(pointSize));
-    renderer.ensureSdCardFontReady(fontId, word.text, 0x03);
+    if (sdFontAdvanceScratch) {
+      renderer.ensureSdCardFontReady(fontId, frameText, frameTextCount, *sdFontAdvanceScratch, 0x03);
+    } else {
+      renderer.ensureSdCardFontReady(fontId, frameText, frameTextCount, 0x03);
+    }
     const int prefixAdvance = renderer.getTextAdvanceX(fontId, prefixBuffer, EpdFontFamily::REGULAR);
     const int pivotAdvance = renderer.getTextAdvanceX(fontId, pivotBuffer, EpdFontFamily::BOLD);
     const int suffixAdvance = renderer.getTextAdvanceX(fontId, suffixBuffer, EpdFontFamily::REGULAR);
-    if (rsvp::calculateRsvpWordLayout(focusX, left, right, prefixAdvance, pivotAdvance, suffixAdvance, layout)) break;
+    if (rsvp::calculateRsvpWordLayout(focusX, left, right, prefixAdvance, pivotAdvance, suffixAdvance, activeLayout)) {
+      resolvedPointSize = pointSize;
+      break;
+    }
   }
-  if (!layout.fits || fontId == 0) return false;
+  if (!activeLayout.fits || fontId == 0) return false;
+
+  contextLineInput = {};
+  contextLineInput.focusX = focusX;
+  contextLineInput.leftBound = left;
+  contextLineInput.rightBound = right;
+  contextLineInput.gap = renderer.getTextAdvanceX(fontId, " ", EpdFontFamily::REGULAR);
+  contextLineInput.fontSize = resolvedPointSize;
+  contextLineInput.prefixAdvance = activeLayout.prefixAdvance;
+  contextLineInput.pivotAdvance = activeLayout.pivotAdvance;
+  contextLineInput.suffixAdvance = activeLayout.suffixAdvance;
+  if (context && context->activeIndex < context->count) {
+    contextLineInput.leftCount = std::min<uint8_t>(context->activeIndex, rsvp::CONTEXT_SIDE_CAPACITY);
+    contextLineInput.rightCount =
+        std::min<uint8_t>(static_cast<uint8_t>(context->count - context->activeIndex - 1), rsvp::CONTEXT_SIDE_CAPACITY);
+    for (uint8_t index = 0; index < contextLineInput.leftCount; ++index) {
+      const auto& token = context->tokens[context->activeIndex - index - 1];
+      contextLineInput.leftNearest[index] = {renderer.getTextAdvanceX(fontId, token.text, EpdFontFamily::REGULAR),
+                                             token.punctuation};
+    }
+    for (uint8_t index = 0; index < contextLineInput.rightCount; ++index) {
+      const auto& token = context->tokens[context->activeIndex + index + 1];
+      contextLineInput.rightNearest[index] = {renderer.getTextAdvanceX(fontId, token.text, EpdFontFamily::REGULAR),
+                                              token.punctuation};
+    }
+  }
+  if (!rsvp::calculateRsvpContextLineLayout(contextLineInput, contextLineLayout)) return false;
 
   const int usableBottom = renderer.getScreenHeight() - marginBottom;
   const int lineHeight = renderer.getLineHeight(fontId);
   const int y = marginTop + (usableBottom - marginTop - lineHeight) / 2;
-  renderer.drawText(fontId, layout.prefixX, y, prefixBuffer, true, EpdFontFamily::REGULAR);
-  renderer.drawText(fontId, layout.pivotX, y, pivotBuffer, true, EpdFontFamily::BOLD);
-  renderer.drawText(fontId, layout.suffixX, y, suffixBuffer, true, EpdFontFamily::REGULAR);
+  if (context && context->activeIndex < context->count) {
+    for (uint8_t index = 0; index < contextLineInput.leftCount; ++index) {
+      if (!contextLineLayout.leftVisible[index]) continue;
+      const auto& token = context->tokens[context->activeIndex - index - 1];
+      renderer.drawText(fontId, contextLineLayout.leftX[index], y, token.text, true, EpdFontFamily::REGULAR);
+    }
+    for (uint8_t index = 0; index < contextLineInput.rightCount; ++index) {
+      if (!contextLineLayout.rightVisible[index]) continue;
+      const auto& token = context->tokens[context->activeIndex + index + 1];
+      renderer.drawText(fontId, contextLineLayout.rightX[index], y, token.text, true, EpdFontFamily::REGULAR);
+    }
+  }
+  renderer.drawText(fontId, contextLineLayout.active.prefixX, y, prefixBuffer, true, EpdFontFamily::REGULAR);
+  renderer.drawText(fontId, contextLineLayout.active.pivotX, y, pivotBuffer, true, EpdFontFamily::BOLD);
+  renderer.drawText(fontId, contextLineLayout.active.suffixX, y, suffixBuffer, true, EpdFontFamily::REGULAR);
 
   if (SETTINGS.rsvpGuideStyle != CrossPointSettings::RSVP_GUIDES_OFF) {
     renderer.drawLine(focusX, std::max(marginTop, y - 22), focusX, std::max(marginTop, y - 8), 2, true);
@@ -440,7 +525,8 @@ void RsvpReaderActivity::renderBook() {
     // Boundary/error screens are infrequent; the wrapped helper may allocate
     // line strings only when a translation exceeds the oriented safe width.
     UITheme::drawCenteredWrappedText(renderer, messageBounds, UI_12_FONT_ID, message, 3, true, EpdFontFamily::BOLD);
-  } else if (!currentDecision.frame.preparedWord || !drawPreparedWord(*currentDecision.frame.preparedWord)) {
+  } else if (!currentDecision.frame.preparedWord ||
+             !drawPreparedWord(*currentDecision.frame.preparedWord, currentDecision.frame.contextWindow)) {
     renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() / 2, tr(STR_RSVP_BOUNDARY_LONG_WORD), true,
                               EpdFontFamily::BOLD);
     wordDoesNotFitPending.store(true);

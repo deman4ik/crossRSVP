@@ -59,8 +59,9 @@ bool isLexicalBase(const uint32_t codepoint) {
 }
 
 bool isClosingMark(const uint32_t codepoint) {
-  return codepoint == ')' || codepoint == ']' || codepoint == '}' || codepoint == 0x00BB || codepoint == 0x2019 ||
-         codepoint == 0x201D || codepoint == 0x203A || codepoint == 0x3009 || codepoint == 0x300B ||
+  return codepoint == ')' || codepoint == ']' || codepoint == '}' || codepoint == '>' || codepoint == '\'' ||
+         codepoint == '"' || codepoint == 0x00BB || codepoint == 0x2019 || codepoint == 0x201D || codepoint == 0x203A ||
+         codepoint == 0x3009 || codepoint == 0x300B || codepoint == 0x300D || codepoint == 0x300F ||
          codepoint == 0x3011 || codepoint == 0x3015 || codepoint == 0x3017 || codepoint == 0x3019 ||
          codepoint == 0x301B;
 }

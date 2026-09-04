@@ -1300,7 +1300,52 @@ void SdCardFont::clearPersistentCache() {
     delete[] advanceTable_[i];
     advanceTable_[i] = nullptr;
     advanceTableSize_[i] = 0;
+    advanceTableCapacity_[i] = 0;
   }
+}
+
+bool SdCardFont::reserveAdvanceTable(const uint8_t styleMask, uint32_t capacity) {
+  const uint8_t resolvedMask = resolveStyleMask(styleMask);
+  capacity = std::min(capacity, ADVANCE_CACHE_LIMIT);
+  if (capacity == 0) return true;
+  AdvanceEntry* previousTables[MAX_STYLES] = {};
+  uint32_t previousCapacities[MAX_STYLES] = {};
+  bool replaced[MAX_STYLES] = {};
+  bool allocationFailed = false;
+  for (uint8_t si = 0; si < MAX_STYLES; si++) {
+    if (!(resolvedMask & (1 << si)) || !styles_[si].present || advanceTableCapacity_[si] >= capacity) {
+      continue;
+    }
+
+    auto* reserved = new (std::nothrow) AdvanceEntry[capacity];
+    if (!reserved) {
+      LOG_ERR("SDCF", "reserveAdvanceTable: alloc failed for style %u (%u entries)", si, capacity);
+      allocationFailed = true;
+      break;
+    }
+    if (advanceTable_[si] && advanceTableSize_[si] != 0) {
+      memcpy(reserved, advanceTable_[si], advanceTableSize_[si] * sizeof(AdvanceEntry));
+    }
+    previousTables[si] = advanceTable_[si];
+    previousCapacities[si] = advanceTableCapacity_[si];
+    advanceTable_[si] = reserved;
+    advanceTableCapacity_[si] = capacity;
+    replaced[si] = true;
+  }
+  if (allocationFailed) {
+    for (uint8_t rollback = 0; rollback < MAX_STYLES; rollback++) {
+      if (!replaced[rollback]) continue;
+      delete[] advanceTable_[rollback];
+      advanceTable_[rollback] = previousTables[rollback];
+      advanceTableCapacity_[rollback] = previousCapacities[rollback];
+      replaced[rollback] = false;
+    }
+    return false;
+  }
+  for (uint8_t committed = 0; committed < MAX_STYLES; committed++) {
+    if (replaced[committed]) delete[] previousTables[committed];
+  }
+  return true;
 }
 
 bool SdCardFont::advanceTableLookup(uint8_t styleIdx, uint32_t codepoint, uint16_t* outAdvance) const {
@@ -1323,10 +1368,51 @@ bool SdCardFont::advanceTableLookup(uint8_t styleIdx, uint32_t codepoint, uint16
   return false;
 }
 
-void SdCardFont::mergeIntoAdvanceTable(uint8_t styleIdx, const AdvanceEntry* sortedNew, uint32_t newCount) {
+void SdCardFont::mergeIntoAdvanceTable(uint8_t styleIdx, const AdvanceEntry* sortedNew, uint32_t newCount,
+                                       const bool allowInPlace) {
   if (newCount == 0) return;
   const uint32_t oldSize = advanceTableSize_[styleIdx];
-  if (oldSize >= ADVANCE_CACHE_LIMIT) return;  // already full
+  const uint32_t tableCapacity = advanceTableCapacity_[styleIdx];
+  if (allowInPlace && tableCapacity != 0 && oldSize >= tableCapacity) {
+    return;  // reserved table is full
+  }
+  if (tableCapacity == 0 && oldSize >= ADVANCE_CACHE_LIMIT) {
+    return;  // legacy table is full
+  }
+
+  if (allowInPlace && tableCapacity != 0) {
+    // The RSVP path reserves the bounded table before entering its frame loop.
+    // Select the retained prefix first, then shift and merge in place. The
+    // forward merge is safe because the shifted old range starts after the
+    // selected new prefix and is never overwritten before it is consumed.
+    const uint32_t mergedSize = std::min(tableCapacity, oldSize + newCount);
+    uint32_t oldRetained = 0;
+    uint32_t newRetained = 0;
+    while (oldRetained + newRetained < mergedSize) {
+      if (newRetained >= newCount || (oldRetained < oldSize && advanceTable_[styleIdx][oldRetained].codepoint <=
+                                                                   sortedNew[newRetained].codepoint)) {
+        oldRetained++;
+      } else {
+        newRetained++;
+      }
+    }
+
+    auto* table = advanceTable_[styleIdx];
+    std::memmove(table + newRetained, table, oldRetained * sizeof(AdvanceEntry));
+    uint32_t oldIndex = 0;
+    uint32_t newIndex = 0;
+    uint32_t outputIndex = 0;
+    while (outputIndex < mergedSize) {
+      if (newIndex >= newRetained ||
+          (oldIndex < oldRetained && table[newRetained + oldIndex].codepoint <= sortedNew[newIndex].codepoint)) {
+        table[outputIndex++] = table[newRetained + oldIndex++];
+      } else {
+        table[outputIndex++] = sortedNew[newIndex++];
+      }
+    }
+    advanceTableSize_[styleIdx] = mergedSize;
+    return;
+  }
 
   // Cap the merged size at ADVANCE_CACHE_LIMIT. Anything past the cap is
   // dropped from the tail of the sorted merge — a deterministic, bounded loss
@@ -1354,6 +1440,7 @@ void SdCardFont::mergeIntoAdvanceTable(uint8_t styleIdx, const AdvanceEntry* sor
   delete[] advanceTable_[styleIdx];
   advanceTable_[styleIdx] = merged;
   advanceTableSize_[styleIdx] = k;
+  advanceTableCapacity_[styleIdx] = mergedCap;
 }
 
 bool SdCardFont::hasAdvanceTable() const {
@@ -1387,7 +1474,8 @@ uint16_t SdCardFont::getAdvance(uint32_t codepoint, uint8_t style) const {
 // Given a sorted array of unique codepoints, resolve glyph indices per style,
 // batch-read advanceX from SD, and merge into the persistent advance table.
 // Caller owns the codepoints buffer.
-int SdCardFont::fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCount, uint8_t styleMask) {
+int SdCardFont::fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCount, uint8_t styleMask,
+                                           AdvanceBuildScratch* scratch) {
   int totalMissed = 0;
   for (uint8_t si = 0; si < MAX_STYLES; si++) {
     if (!(styleMask & (1 << si)) || !styles_[si].present) continue;
@@ -1396,16 +1484,19 @@ int SdCardFont::fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCoun
     // Stop fetching once the cache is full — further inserts would be dropped
     // by the merge anyway. The renderer fast path tolerates missing entries
     // (returns 0); the slow path is still correct for those codepoints.
-    if (advanceTableSize_[si] >= ADVANCE_CACHE_LIMIT) continue;
+    const uint32_t tableCapacity =
+        scratch && advanceTableCapacity_[si] != 0 ? advanceTableCapacity_[si] : ADVANCE_CACHE_LIMIT;
+    if (advanceTableSize_[si] >= tableCapacity) continue;
 
     // For each codepoint in `codepoints`, skip those already cached, then
     // resolve to a glyph index. Build a parallel array sorted by glyph index
     // for sequential SD reads.
-    struct CpIdx {
-      uint32_t codepoint;
-      int32_t glyphIndex;
-    };
-    std::unique_ptr<CpIdx[]> mappings(new (std::nothrow) CpIdx[cpCount]);
+    std::unique_ptr<AdvanceBuildMapping[]> ownedMappings;
+    AdvanceBuildMapping* mappings = scratch ? scratch->mappings : nullptr;
+    if (!mappings) {
+      ownedMappings.reset(new (std::nothrow) AdvanceBuildMapping[cpCount]);
+      mappings = ownedMappings.get();
+    }
     if (!mappings) {
       LOG_ERR("SDCF", "buildAdvanceTable: failed to allocate mappings for style %u", si);
       totalMissed += cpCount;
@@ -1435,8 +1526,8 @@ int SdCardFont::fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCoun
     if (needCount == 0) continue;
 
     // Sort by glyph index so SD reads are mostly sequential.
-    std::sort(mappings.get(), mappings.get() + needCount,
-              [](const CpIdx& a, const CpIdx& b) { return a.glyphIndex < b.glyphIndex; });
+    std::sort(mappings, mappings + needCount,
+              [](const AdvanceBuildMapping& a, const AdvanceBuildMapping& b) { return a.glyphIndex < b.glyphIndex; });
 
     // Open file once and read advanceX for each needed glyph.
     HalFile file;
@@ -1445,7 +1536,12 @@ int SdCardFont::fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCoun
       continue;
     }
 
-    std::unique_ptr<AdvanceEntry[]> staged(new (std::nothrow) AdvanceEntry[needCount]);
+    std::unique_ptr<AdvanceEntry[]> ownedStaged;
+    AdvanceEntry* staged = scratch ? scratch->staged : nullptr;
+    if (!staged) {
+      ownedStaged.reset(new (std::nothrow) AdvanceEntry[needCount]);
+      staged = ownedStaged.get();
+    }
     if (!staged) {
       LOG_ERR("SDCF", "buildAdvanceTable: failed to allocate staging for style %u", si);
       file.close();
@@ -1477,9 +1573,9 @@ int SdCardFont::fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCoun
 
     if (fetched > 0) {
       // Sort staged by codepoint, then merge into the persistent table.
-      std::sort(staged.get(), staged.get() + fetched,
+      std::sort(staged, staged + fetched,
                 [](const AdvanceEntry& a, const AdvanceEntry& b) { return a.codepoint < b.codepoint; });
-      mergeIntoAdvanceTable(si, staged.get(), fetched);
+      mergeIntoAdvanceTable(si, staged, fetched, scratch != nullptr);
     }
 
     LOG_DBG("SDCF", "Advance table style %u: +%u from SD, total=%u/%u", si, fetched, advanceTableSize_[si],
@@ -1491,7 +1587,7 @@ int SdCardFont::fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCoun
 
 template <typename Iter>
 int SdCardFont::buildAdvanceTableRange(Iter begin, Iter end, bool includeSpace, bool includeHyphen, uint8_t styleMask,
-                                       const char* extraText) {
+                                       const char* extraText, AdvanceBuildScratch* scratch) {
   if (!loaded_) return -1;
   styleMask = resolveStyleMask(styleMask);
   if (styleMask == 0) return 0;
@@ -1500,7 +1596,8 @@ int SdCardFont::buildAdvanceTableRange(Iter begin, Iter end, bool includeSpace, 
 
   // +2 reserved slots for space and hyphen injected after the main scan.
   static constexpr uint32_t MAX_UNIQUE_CODEPOINTS = 4096;
-  uint32_t* codepoints = new (std::nothrow) uint32_t[MAX_UNIQUE_CODEPOINTS + 2];
+  const uint32_t codepointCapacity = scratch ? ADVANCE_BUILD_SCRATCH_CODEPOINTS : MAX_UNIQUE_CODEPOINTS;
+  uint32_t* codepoints = scratch ? scratch->codepoints : new (std::nothrow) uint32_t[MAX_UNIQUE_CODEPOINTS + 2];
   if (!codepoints) {
     LOG_ERR("SDCF", "buildAdvanceTable: failed to allocate codepoint buffer (%u bytes)", MAX_UNIQUE_CODEPOINTS * 4);
     return -1;
@@ -1509,10 +1606,10 @@ int SdCardFont::buildAdvanceTableRange(Iter begin, Iter end, bool includeSpace, 
   bool hitCap = false;
 
   for (auto it = begin; it != end && !hitCap; ++it) {
-    hitCap = collectUniqueCodepoints(asCStr(*it), codepoints, cpCount, MAX_UNIQUE_CODEPOINTS);
+    hitCap = collectUniqueCodepoints(asCStr(*it), codepoints, cpCount, codepointCapacity);
   }
   if (extraText && !hitCap) {
-    hitCap = collectUniqueCodepoints(extraText, codepoints, cpCount, MAX_UNIQUE_CODEPOINTS);
+    hitCap = collectUniqueCodepoints(extraText, codepoints, cpCount, codepointCapacity);
   }
 
   if (includeSpace && std::none_of(codepoints, codepoints + cpCount, [](uint32_t c) { return c == ' '; }))
@@ -1521,18 +1618,27 @@ int SdCardFont::buildAdvanceTableRange(Iter begin, Iter end, bool includeSpace, 
     codepoints[cpCount++] = '-';
 
   if (hitCap) {
-    LOG_ERR("SDCF", "buildAdvanceTable: unique codepoint cap (%u) hit, layout may be approximate",
-            MAX_UNIQUE_CODEPOINTS);
+    LOG_ERR("SDCF", "buildAdvanceTable: unique codepoint cap (%u) hit, layout may be approximate", codepointCapacity);
   }
   std::sort(codepoints, codepoints + cpCount);
-  int totalMissed = fetchAdvancesForCodepoints(codepoints, cpCount, styleMask);
-  delete[] codepoints;
+  int totalMissed = fetchAdvancesForCodepoints(codepoints, cpCount, styleMask, scratch);
+  if (!scratch) delete[] codepoints;
   stats_.prewarmTotalMs = millis() - startMs;
   return totalMissed;
 }
 
 int SdCardFont::buildAdvanceTable(const char* utf8Text, uint8_t styleMask, const char* extraText) {
   return buildAdvanceTableRange(&utf8Text, &utf8Text + 1, false, false, styleMask, extraText);
+}
+
+int SdCardFont::buildAdvanceTable(const char* const* utf8Texts, const size_t textCount, const uint8_t styleMask,
+                                  const char* extraText) {
+  return buildAdvanceTableRange(utf8Texts, utf8Texts + textCount, false, false, styleMask, extraText);
+}
+
+int SdCardFont::buildAdvanceTable(const char* const* utf8Texts, const size_t textCount, AdvanceBuildScratch& scratch,
+                                  const uint8_t styleMask, const char* extraText) {
+  return buildAdvanceTableRange(utf8Texts, utf8Texts + textCount, false, false, styleMask, extraText, &scratch);
 }
 
 int SdCardFont::buildAdvanceTable(const std::deque<std::string>& words, bool includeHyphen, uint8_t styleMask,

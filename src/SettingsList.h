@@ -179,15 +179,15 @@ inline SettingInfo buildDictionarySetting(const std::vector<DictionaryEntry>& di
 }
 
 inline std::vector<StrId> buildLongPressMenuValues() {
-  static constexpr StrId VALUES[] = {StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION,
+  static constexpr StrId VALUES[] = {StrId::STR_KOSYNC,     StrId::STR_DISABLED,    StrId::STR_BOOKMARK_OPTION,
                                      StrId::STR_DICTIONARY, StrId::STR_READER_MENU, StrId::STR_RSVP_MODE};
   if (BoardConfig::hasHomeKey()) return {VALUES, VALUES + std::size(VALUES)};
 
   // Long-press Reader Menu is a Home-key action on touch boards. Keep its
   // persisted slot (4) occupied on button boards while hiding the unsupported
   // label; otherwise the appended RSVP value (5) would be written as index 4.
-  return {StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY,
-          StrId::STR_DISABLED, StrId::STR_RSVP_MODE};
+  return {StrId::STR_KOSYNC,     StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION,
+          StrId::STR_DICTIONARY, StrId::STR_DISABLED, StrId::STR_RSVP_MODE};
 }
 
 // Shared settings list used by both the device settings UI and the web settings API.
@@ -302,6 +302,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Enum(StrId::STR_RSVP_GUIDES, &CrossPointSettings::rsvpGuideStyle,
                           {StrId::STR_RSVP_GUIDES_OFF, StrId::STR_RSVP_GUIDES_ON}, "rsvpGuideStyle",
                           StrId::STR_CAT_READER),
+        SettingInfo::Toggle(StrId::STR_RSVP_CONTEXT_LINE, &CrossPointSettings::rsvpContextLine,
+                            rsvp::CONTEXT_LINE_SETTING_KEY, StrId::STR_CAT_READER),
         SettingInfo::Value(StrId::STR_RSVP_CLAUSE_PAUSE, &CrossPointSettings::rsvpClausePauseTenths,
                            {CrossPointSettings::RSVP_PAUSE_MIN_TENTHS, CrossPointSettings::RSVP_PAUSE_MAX_TENTHS, 1},
                            "rsvpClausePauseTenths", StrId::STR_CAT_READER),

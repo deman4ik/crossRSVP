@@ -2,6 +2,7 @@
 
 #include <EpdFontFamily.h>
 #include <HalDisplay.h>
+#include <SdCardFont.h>
 
 namespace BidiUtils {
 // Paragraph base direction for the Unicode BiDi algorithm (UAX#9).
@@ -12,8 +13,6 @@ enum class BidiBaseDir : signed char { AUTO = -1, LTR = 0, RTL = 1 };
 }  // namespace BidiUtils
 
 class FontCacheManager;
-class SdCardFont;
-
 #include <cstring>
 #include <deque>
 #include <map>
@@ -180,6 +179,12 @@ class GfxRenderer {
   // (which holds a const GfxRenderer&) before measuring word widths. Safe to call on non-SD fonts (no-op).
   // styleMask: bitmask of styles to prepare (bit 0=regular, 1=bold, 2=italic, 3=bold-italic).
   void ensureSdCardFontReady(int fontId, const char* utf8Text, uint8_t styleMask = 0x0F) const;
+  void ensureSdCardFontReady(int fontId, const char* const* utf8Texts, size_t textCount,
+                             uint8_t styleMask = 0x0F) const;
+  void ensureSdCardFontReady(int fontId, const char* const* utf8Texts, size_t textCount,
+                             SdCardFont::AdvanceBuildScratch& scratch, uint8_t styleMask = 0x0F) const;
+  bool reserveSdCardFontAdvanceTable(int fontId, uint8_t styleMask = 0x0F,
+                                     uint32_t capacity = SdCardFont::ADVANCE_BUILD_SCRATCH_CODEPOINTS) const;
   void ensureSdCardFontReady(int fontId, const std::deque<std::string>& words, bool includeHyphen,
                              uint8_t styleMask = 0x0F) const;
 

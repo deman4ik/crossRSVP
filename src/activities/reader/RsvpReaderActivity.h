@@ -7,6 +7,7 @@
 #include <RsvpRefreshStats.h>
 #include <RsvpSession.h>
 #include <RsvpWordLayout.h>
+#include <SdCardFont.h>
 
 #include <atomic>
 #include <memory>
@@ -32,7 +33,7 @@ class RsvpReaderActivity final : public ReaderActivity {
   bool isAtEndOfBook() const override { return false; }
   void renderBook() override;
   void applyDecision(const rsvp::Decision& decision);
-  bool drawPreparedWord(const rsvp::PreparedWord& word);
+  bool drawPreparedWord(const rsvp::PreparedWord& word, const rsvp::ContextWindow* context);
   void drawStatus() const;
   const char* pauseMessage() const;
   bool saveCheckpoint();
@@ -59,7 +60,10 @@ class RsvpReaderActivity final : public ReaderActivity {
   std::atomic<bool> checkpointRequestedFromRender{false};
   std::atomic<bool> fatalFallbackReady{false};
   std::atomic<bool> wordDoesNotFitPending{false};
+  std::unique_ptr<SdCardFont::AdvanceBuildScratch> sdFontAdvanceScratch;
   char prefixBuffer[rsvp::MAX_TOKEN_BYTES + 1] = {};
   char pivotBuffer[rsvp::MAX_TOKEN_BYTES + 1] = {};
   char suffixBuffer[rsvp::MAX_TOKEN_BYTES + 1] = {};
+  rsvp::ContextLineInput contextLineInput;
+  rsvp::ContextLineLayout contextLineLayout;
 };

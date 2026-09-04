@@ -1,11 +1,11 @@
 # CrossPoint Reader
 
 > [!WARNING]
-> The crossRSVP v0.2.1 build in this fork is an **experimental release candidate qualified only for Xteink X3 / EPUB**.
+> The crossRSVP v0.3.0 build in this fork is an **experimental release candidate qualified only for Xteink X3 / EPUB**.
 > It has passed host tests and deterministic X3 simulator scenarios, but it has not yet completed the physical X3
 > endurance, timing, heap, ghosting, battery, install, or rollback checks. Read the
-> [qualification report](docs/qualification/rsvp-x3-v0.2.1/README.md) and
-> [X3 installation and rollback guide](docs/rsvp-x3-v0.2.1-installation.md) before flashing it. The
+> [qualification report](docs/qualification/rsvp-x3-v0.3.0/README.md) and
+> [X3 installation and rollback guide](docs/rsvp-x3-v0.3.0-installation.md) before flashing it. The
 > [Russian RSVP button guide](docs/rsvp-controls-ru.md) explains quick entry, every logical button, and content-boundary
 > behavior.
 
@@ -19,6 +19,7 @@ crossRSVP основан на CrossPoint Reader и сохраняет обычн
 | Открытие EPUB | Постраничный режим | Постраничный режим; RSVP включается только явно |
 | Быстрое последовательное чтение | Focus Reading внутри страницы, без показа по одному слову | Отдельный взаимоисключающий режим RSVP: одно слово на кадр |
 | Точка фиксации | Не применяется к последовательному показу слов | Unicode-безопасный ORP, жирная опорная буква и неподвижные направляющие |
+| Строка контекста | Нет | Опционально показывает до трёх целых слов и знаков пунктуации с каждой стороны, не сдвигая Active Word и ORP |
 | Русский текст | Обычный постраничный рендеринг | ORP по символам, а не байтам UTF-8; поддержка `ё`, `й`, кавычек, тире и пауз по пунктуации |
 | Переключение режимов | Не требуется | Paged ↔ RSVP с общей позицией, подсветкой последнего слова и безопасным повтором при возврате |
 | Изображения и таблицы | Показываются на странице | RSVP останавливается: объект можно открыть в Paged или явно пропустить одной кнопкой |
@@ -29,7 +30,7 @@ Focus Reading из базовой прошивки остаётся отдель
 
 ### Как включить и использовать RSVP
 
-1. Установите экспериментальную сборку по [инструкции для X3](docs/rsvp-x3-v0.2.1-installation.md) и откройте EPUB.
+1. Установите экспериментальную сборку по [инструкции для X3](docs/rsvp-x3-v0.3.0-installation.md) и откройте EPUB.
    Книга всегда сначала открывается в постраничном режиме.
 2. Для входа без настройки коротко нажмите логическую кнопку **Подтвердить**, откройте меню читалки и выберите
    **Режим чтения RSVP**.
@@ -37,6 +38,10 @@ Focus Reading из базовой прошивки остаётся отдель
    этого удерживайте логическую кнопку **Подтвердить** примерно 0,4 секунды прямо во время чтения.
 4. RSVP откроется на паузе со словом из текущей позиции чтения. Управление использует логические кнопки и поэтому
    учитывает переназначение передних кнопок и смену раскладки боковых кнопок.
+
+Опция **Настройки → Чтение → Строка контекста RSVP** по умолчанию выключена. При включении рядом с Active Word
+показываются ближайшие целые слова и отдельные знаки пунктуации, которые помещаются на экран. Контекст не пересекает
+границы предложения, абзаца, главы и non-text содержимого, не изменяет скорость и не продвигает сохранённую позицию.
 
 | Кнопка в RSVP | Действие |
 | --- | --- |
@@ -63,7 +68,7 @@ Focus Reading из базовой прошивки остаётся отдель
 
 Полная карта кнопок, особенности Power, последовательных объектов, глав, переназначения и проверки на устройстве
 описаны в [подробной русской инструкции](docs/rsvp-controls-ru.md). Результаты автоматической квалификации находятся
-в [отчёте X3 v0.2.1](docs/qualification/rsvp-x3-v0.2.1/README.md).
+в [отчёте X3 v0.3.0](docs/qualification/rsvp-x3-v0.3.0/README.md).
 
 [![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
 

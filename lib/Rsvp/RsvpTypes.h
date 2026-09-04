@@ -6,6 +6,8 @@
 namespace rsvp {
 
 constexpr size_t MAX_TOKEN_BYTES = 200;
+constexpr uint8_t CONTEXT_SIDE_CAPACITY = 3;
+constexpr uint8_t CONTEXT_WINDOW_CAPACITY = CONTEXT_SIDE_CAPACITY * 2 + 1;
 
 struct ResumeAnchor {
   uint16_t spineIndex = 0;
@@ -91,6 +93,18 @@ struct Input {
 
 struct PreparedWord;
 
+struct ContextWindowToken {
+  const char* text = nullptr;
+  uint16_t textLength = 0;
+  bool punctuation = false;
+};
+
+struct ContextWindow {
+  ContextWindowToken tokens[CONTEXT_WINDOW_CAPACITY] = {};
+  uint8_t count = 0;
+  uint8_t activeIndex = 0;
+};
+
 struct Frame {
   uint32_t id = 0;
   uint32_t requestedAtMs = 0;
@@ -98,6 +112,7 @@ struct Frame {
   uint16_t textLength = 0;
   ResumeAnchor anchor;
   const PreparedWord* preparedWord = nullptr;
+  const ContextWindow* contextWindow = nullptr;
 };
 
 struct Decision {

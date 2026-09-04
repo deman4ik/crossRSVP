@@ -3,6 +3,7 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <ObfuscationUtils.h>
+#include <RsvpSettings.h>
 
 #include <algorithm>
 #include <cstring>
@@ -72,6 +73,7 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
 
   for (const auto& info : getSettingsList()) {
     if (!info.key) continue;
+    if (strcmp(info.key, rsvp::CONTEXT_LINE_SETTING_KEY) == 0) continue;
     // Dynamic entries (KOReader etc.) are stored in their own files — skip.
     if (!info.valuePtr && !info.stringOffset) continue;
 
@@ -88,7 +90,7 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
       doc[info.key] = s.*(info.valuePtr);
     }
   }
-
+  rsvp::saveContextLineSetting(doc, rsvpContextLine);
   // Front button remap — managed by RemapFrontButtons sub-activity, not in SettingsList.
   doc["frontButtonBack"] = frontButtonBack;
   doc["frontButtonConfirm"] = frontButtonConfirm;
@@ -126,6 +128,7 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
 
   for (const auto& info : getSettingsList()) {
     if (!info.key) continue;
+    if (strcmp(info.key, rsvp::CONTEXT_LINE_SETTING_KEY) == 0) continue;
     // Dynamic entries (KOReader etc.) are stored in their own files — skip.
     if (!info.valuePtr && !info.stringOffset) continue;
 
@@ -184,7 +187,7 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
       s.*(info.valuePtr) = v;
     }
   }
-
+  rsvpContextLine = rsvp::loadContextLineSetting(doc);
   // Value settings use their step for the on-device picker, but the web API
   // and older settings files can still provide an arbitrary in-range number.
   // Normalize RSVP values so persisted state always describes a selectable

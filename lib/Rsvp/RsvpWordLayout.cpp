@@ -22,4 +22,38 @@ bool calculateRsvpWordLayout(const int focusX, const int leftBound, const int ri
   return out.fits;
 }
 
+bool calculateRsvpContextLineLayout(const ContextLineInput& input, ContextLineLayout& output) {
+  output = {};
+  output.fontSize = input.fontSize;
+  if (input.gap < 0 || input.leftCount > MAX_CONTEXT_TOKENS_PER_SIDE ||
+      input.rightCount > MAX_CONTEXT_TOKENS_PER_SIDE ||
+      !calculateRsvpWordLayout(input.focusX, input.leftBound, input.rightBound, input.prefixAdvance, input.pivotAdvance,
+                               input.suffixAdvance, output.active)) {
+    return false;
+  }
+
+  int cursor = output.active.startX;
+  for (uint8_t index = 0; index < input.leftCount; ++index) {
+    const int advance = input.leftNearest[index].advance;
+    if (advance < 0) return false;
+    const int tokenX = cursor - input.gap - advance;
+    if (tokenX < input.leftBound) break;
+    output.leftX[index] = tokenX;
+    output.leftVisible[index] = true;
+    cursor = tokenX;
+  }
+
+  cursor = output.active.startX + output.active.totalWidth;
+  for (uint8_t index = 0; index < input.rightCount; ++index) {
+    const int advance = input.rightNearest[index].advance;
+    if (advance < 0) return false;
+    const int tokenX = cursor + input.gap;
+    if (tokenX + advance > input.rightBound) break;
+    output.rightX[index] = tokenX;
+    output.rightVisible[index] = true;
+    cursor = tokenX + advance;
+  }
+  return true;
+}
+
 }  // namespace rsvp

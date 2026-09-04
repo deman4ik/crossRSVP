@@ -7,7 +7,8 @@ namespace rsvp {
 
 class RsvpSession final {
  public:
-  explicit RsvpSession(RsvpSource& source, ResumeAnchor initialAnchor = {}, RsvpPacingConfig pacing = {});
+  explicit RsvpSession(RsvpSource& source, ResumeAnchor initialAnchor = {}, RsvpPacingConfig pacing = {},
+                       bool contextLineEnabled = false);
 
   Decision step(const Input& input);
   ResumeAnchor currentAnchor() const { return presentedAnchor; }
@@ -20,12 +21,22 @@ class RsvpSession final {
 
  private:
   static constexpr uint8_t HISTORY_CAPACITY = 6;
+  static constexpr uint8_t CONTEXT_SEPARATOR_CAPACITY = 48;
+  static constexpr uint8_t READ_AHEAD_EVENT_CAPACITY = 8;
+  static constexpr uint16_t READ_AHEAD_TEXT_CAPACITY = 512;
 
   bool emitNextWord(uint32_t nowMs, Decision& decision);
-  bool fetchNextEvent();
-  bool fetchLookahead();
+  bool bufferNextEvent();
+  void ensureReadAhead(bool includeVisualContext);
+  bool readAheadShouldStop(bool includeVisualContext) const;
+  bool peekReadAhead(uint8_t index, DocumentEvent& event) const;
+  bool popReadAhead(DocumentEvent& event);
+  void clearReadAhead();
   bool emitHistoryWord(uint8_t historyIndex, uint32_t nowMs, Decision& decision);
   bool emitWord(const DocumentEvent& event, uint32_t nowMs, Decision& decision, bool recordHistory);
+  bool takeNextWord(DocumentEvent& event, Decision& decision);
+  void configureCurrentGap();
+  void buildContextWindow();
   void setError(Decision& decision, Error error);
   void fillDecision(Decision& decision) const;
   uint32_t baseIntervalMs() const;
@@ -37,15 +48,32 @@ class RsvpSession final {
 
   struct HistoryEntry {
     DocumentEvent event;
+    char trailingText[CONTEXT_SEPARATOR_CAPACITY + 1] = {};
+    uint16_t trailingLength = 0;
+    bool contextBoundaryAfter = false;
+  };
+
+  struct BufferedEvent {
+    EventKind kind = EventKind::EndOfBook;
+    ResumeAnchor anchor;
+    NonTextKind nonText = NonTextKind::None;
+    uint16_t textOffset = 0;
+    uint16_t textLength = 0;
   };
 
   RsvpSource& source;
   ResumeAnchor initialAnchor;
   RsvpPacingConfig pacing;
+  bool contextLineEnabled = false;
   DocumentEvent currentEvent;
   PreparedWord preparedWord;
-  DocumentEvent lookaheadEvent;
-  bool lookaheadValid = false;
+  BufferedEvent readAhead[READ_AHEAD_EVENT_CAPACITY] = {};
+  char readAheadText[READ_AHEAD_TEXT_CAPACITY] = {};
+  uint16_t readAheadTextUsed = 0;
+  uint8_t readAheadCount = 0;
+  DocumentEvent deferredEvent;
+  bool deferredEventValid = false;
+  ContextWindow contextWindow;
   bool paragraphPending = false;
   bool chapterPending = false;
   bool chapterPauseShown = false;
@@ -63,6 +91,7 @@ class RsvpSession final {
   bool framePresented = false;
   bool checkpointRequestedThisStep = false;
   bool periodicCheckpointPending = false;
+  bool checkpointAfterPresentation = false;
   bool checkpointClockStarted = false;
   bool clockInitialized = false;
   uint32_t lastCheckpointRequestMs = 0;
