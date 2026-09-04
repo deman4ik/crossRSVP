@@ -1,5 +1,7 @@
 # RSVP Context Line
 
+Status: superseded by [0005 — RSVP Presentation Groups](0005-rsvp-presentation-groups.md)
+
 ## Problem Statement
 
 RSVP Mode currently isolates the Active Word, which maximizes fixation but removes the nearby linguistic context that helps some readers anticipate phrasing and recover meaning. A reader cannot optionally see the closest previous and following words while keeping the Active Word's ORP fixed, and adding ordinary lookahead naively could advance the document source, Reading Position, pacing, or checkpoint before the reader has actually reached those words.

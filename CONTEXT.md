@@ -25,27 +25,39 @@ A Focus Reading strategy that emphasizes one Optimal Recognition Point grapheme 
 _Avoid_: ORP Mode, ORP Reading Mode
 
 **RSVP Mode**:
-Rapid Serial Visual Presentation in which one Active Word at a time is presented at a fixed visual focus, optionally surrounded by a Context Line.
+Rapid Serial Visual Presentation in which one Presentation Group at a time is presented around a fixed visual focus.
 _Avoid_: Speed mode, flash mode
 
+**Presentation Group**:
+The complete unit shown in one RSVP frame: exactly one Active Word and any eligible Companion Words presented with it.
+_Avoid_: Context Line, chunk, phrase
+
 **Active Word**:
-The sole word in an RSVP frame whose ORP is emphasized and whose presentation advances Reading Position and Playback Pace.
+The word in a Presentation Group whose ORP is emphasized and aligned with the fixed visual focus.
 _Avoid_: Main word, highlighted word, current token
 
-**Context Line**:
-Optional previous and following words displayed around the Active Word without advancing Reading Position or Playback Pace.
-_Avoid_: Extra words, multi-word RSVP
+**Companion Word**:
+A word with Companion Eligibility displayed beside the Active Word without its own ORP emphasis or separate frame.
+_Avoid_: Context word, secondary active word, skipped word
 
-**Context Boundary**:
-A sentence, paragraph, chapter, or non-text transition across which a Context Line does not display neighboring words.
-_Avoid_: Playback pause, page boundary
+**Companion Eligibility**:
+The language-specific permission for a word to join an adjacent Active Word in the same Presentation Group, including the direction in which it may join.
+_Avoid_: Stop word, insignificant word
+
+**Grouping Boundary**:
+A punctuation pause or document transition across which a Presentation Group cannot extend.
+_Avoid_: Context boundary, page boundary
+
+**Playback Step**:
+One automatic or manual advance from the current Presentation Group to the next Presentation Group.
+_Avoid_: Word step, token step
 
 **Reading Position**:
 The shared semantic location in a book from which either Reading Mode can continue.
 _Avoid_: Page number, RSVP index
 
 **Resume Anchor**:
-The word used to reconcile Reading Position when switching modes. Leaving RSVP Mode anchors the last displayed word; after a page change in Paged Mode, the anchor becomes the first word on the displayed page.
+The word used to reconcile Reading Position when switching modes. Leaving RSVP Mode anchors the last source word in the most recently accepted Presentation Group; after a page change in Paged Mode, the anchor becomes the first word on the displayed page.
 _Avoid_: Bookmark, cursor
 
 **Mode Switch**:
@@ -73,5 +85,5 @@ The letters and internal marks that determine a word's ORP after surrounding pun
 _Avoid_: Trimmed word, clean word
 
 **Playback Pace**:
-The requested rate of word presentation, including the time required to update the display but excluding deliberate linguistic pauses. It cannot exceed the pace physically achievable by the panel.
+The requested rate of RSVP presentation, including the full contribution of an Active Word and a reduced contribution from each Companion Word, plus display refresh time but excluding deliberate linguistic pauses. It cannot exceed the pace physically achievable by the panel.
 _Avoid_: Timer delay, nominal WPM

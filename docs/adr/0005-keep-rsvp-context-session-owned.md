@@ -1,8 +1,11 @@
 ---
-status: accepted
+status: superseded
+superseded-by: 0006-replace-rsvp-context-line-with-presentation-groups.md
 ---
 
 # Keep the RSVP Context Window session-owned
+
+This decision is retained as historical context. ADR 0006 replaces the Context Line and its read-ahead window with bounded Presentation Groups.
 
 RSVP Session will own a fixed-capacity Context Window containing the Active Word and the nearest available previous and following context. The source may be read ahead to populate this window, but an event becomes logically read only when it becomes the Active Word; visual context never advances Reading Position, Playback Pace, history navigation, or the RSVP Checkpoint. The renderer only lays out the supplied window and never advances the document source itself.
 

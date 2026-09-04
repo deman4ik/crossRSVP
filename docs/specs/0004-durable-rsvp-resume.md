@@ -1,5 +1,7 @@
 # Durable RSVP Resume
 
+Status: amended by [0005 — RSVP Presentation Groups](0005-rsvp-presentation-groups.md). Where grouping is enabled, the Presentation Group acknowledgement and Resume Anchor rules in 0005 replace this document's single-Active-Word replay rule.
+
 ## Problem Statement
 
 RSVP Mode already writes a durable per-book RSVP Checkpoint, but a reader who exits to Home or the File Browser and later reopens the book cannot reliably continue from the last Active Word. Reopening intentionally starts in Paged Mode, and the first subsequent Mode Switch to RSVP can replace the saved Resume Anchor with the beginning of the displayed page even when the reader has not navigated anywhere. This repeats an arbitrary part of the page instead of the last word the reader actually saw.
