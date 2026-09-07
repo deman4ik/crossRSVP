@@ -28,6 +28,10 @@ _Avoid_: ORP Mode, ORP Reading Mode
 Rapid Serial Visual Presentation in which one Presentation Group at a time is presented around a fixed visual focus.
 _Avoid_: Speed mode, flash mode
 
+**RSVP Control Panel**:
+The touch-accessible controls available while RSVP Mode is paused, for explicit playback, group navigation, pace adjustment, and return to Paged Mode.
+_Avoid_: Touch mode, third reading mode
+
 **Presentation Group**:
 The complete unit shown in one RSVP frame: exactly one Active Word and any eligible Companion Words presented with it.
 _Avoid_: Context Line, chunk, phrase
