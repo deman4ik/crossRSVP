@@ -210,7 +210,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static constexpr uint8_t RSVP_FONT_SIZE_MAX = 18;
   static constexpr uint8_t RSVP_FONT_SIZE_STEP = 2;
   static constexpr uint8_t RSVP_DEFAULT_FONT_SIZE = DEFAULT_FONT_POINT_SIZE;
-  static constexpr uint8_t RSVP_CONTEXT_LINE_DEFAULT = rsvp::CONTEXT_LINE_DEFAULT;
+  static constexpr uint8_t RSVP_SHORT_WORD_GROUPING_DEFAULT = rsvp::SHORT_WORD_GROUPING_DEFAULT;
   static constexpr uint8_t RSVP_PAUSE_MIN_TENTHS = 10;
   static constexpr uint8_t RSVP_PAUSE_MAX_TENTHS = 40;
   static constexpr uint8_t RSVP_CLAUSE_PAUSE_DEFAULT_TENTHS = 15;
@@ -352,7 +352,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t rsvpPaceWpm = RSVP_DEFAULT_PACE_WPM;
   uint8_t rsvpFontSize = RSVP_DEFAULT_FONT_SIZE;
   uint8_t rsvpGuideStyle = RSVP_GUIDES_ON;
-  uint8_t rsvpContextLine = RSVP_CONTEXT_LINE_DEFAULT;
+  uint8_t rsvpShortWordGroupingEnabled = RSVP_SHORT_WORD_GROUPING_DEFAULT;
   // Deliberate linguistic pauses, stored as tenths of the base frame interval.
   uint8_t rsvpClausePauseTenths = RSVP_CLAUSE_PAUSE_DEFAULT_TENTHS;
   uint8_t rsvpSentencePauseTenths = RSVP_SENTENCE_PAUSE_DEFAULT_TENTHS;

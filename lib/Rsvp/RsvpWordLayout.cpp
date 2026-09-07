@@ -22,36 +22,41 @@ bool calculateRsvpWordLayout(const int focusX, const int leftBound, const int ri
   return out.fits;
 }
 
-bool calculateRsvpContextLineLayout(const ContextLineInput& input, ContextLineLayout& output) {
+bool calculateRsvpGroupLayout(const GroupLayoutInput& input, GroupLayout& output) {
   output = {};
-  output.fontSize = input.fontSize;
-  if (input.gap < 0 || input.leftCount > MAX_CONTEXT_TOKENS_PER_SIDE ||
-      input.rightCount > MAX_CONTEXT_TOKENS_PER_SIDE ||
+  if (input.gap < 0 || input.count == 0 || input.count > 3 || input.activeIndex >= input.count ||
       !calculateRsvpWordLayout(input.focusX, input.leftBound, input.rightBound, input.prefixAdvance, input.pivotAdvance,
                                input.suffixAdvance, output.active)) {
     return false;
   }
 
-  int cursor = output.active.startX;
-  for (uint8_t index = 0; index < input.leftCount; ++index) {
-    const int advance = input.leftNearest[index].advance;
-    if (advance < 0) return false;
-    const int tokenX = cursor - input.gap - advance;
-    if (tokenX < input.leftBound) break;
-    output.leftX[index] = tokenX;
-    output.leftVisible[index] = true;
-    cursor = tokenX;
+  for (uint8_t index = 0; index < input.count; ++index) {
+    if (input.advances[index] < 0) return false;
   }
-
-  cursor = output.active.startX + output.active.totalWidth;
-  for (uint8_t index = 0; index < input.rightCount; ++index) {
-    const int advance = input.rightNearest[index].advance;
-    if (advance < 0) return false;
-    const int tokenX = cursor + input.gap;
-    if (tokenX + advance > input.rightBound) break;
-    output.rightX[index] = tokenX;
-    output.rightVisible[index] = true;
-    cursor = tokenX + advance;
+  output.positions[input.activeIndex] = output.active.startX;
+  for (int index = input.activeIndex - 1; index >= 0; --index) {
+    output.positions[index] = output.positions[index + 1] - input.gap - input.advances[index];
+  }
+  int cursor = output.active.startX + output.active.totalWidth;
+  for (uint8_t index = input.activeIndex + 1; index < input.count; ++index) {
+    output.positions[index] = cursor + input.gap;
+    cursor = output.positions[index] + input.advances[index];
+  }
+  output.begin = 0;
+  output.end = input.count;
+  while (output.begin < input.activeIndex || output.end > input.activeIndex + 1) {
+    const int last = output.end - 1;
+    const int right =
+        output.positions[last] + (last == input.activeIndex ? output.active.totalWidth : input.advances[last]);
+    if (output.positions[output.begin] >= input.leftBound && right <= input.rightBound) break;
+    const int leftDistance = input.activeIndex - output.begin;
+    const int rightDistance = last - input.activeIndex;
+    // Equal-distance ties preserve the postpositive companion.
+    if (leftDistance >= rightDistance && leftDistance != 0) {
+      ++output.begin;
+    } else {
+      --output.end;
+    }
   }
   return true;
 }

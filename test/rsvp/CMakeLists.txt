@@ -27,9 +27,10 @@ add_executable(RsvpTest
   RsvpResumeLifecycleTest.cpp
   RsvpSessionPlaybackTest.cpp
   RsvpModeSwitchTest.cpp
-  RsvpContextLineLayoutTest.cpp
-  RsvpContextWindowTest.cpp
-  RsvpContextLineSettingsTest.cpp
+  RsvpGroupLayoutTest.cpp
+  RsvpCompanionPolicyTest.cpp
+  RsvpPresentationGroupTest.cpp
+  RsvpGroupingSettingsTest.cpp
   RsvpPendingActionsTest.cpp
   EpubCacheUtilsTest.cpp
   ${REPO_ROOT}/lib/Rsvp/EpubVisibleTextSource.cpp
@@ -40,6 +41,7 @@ add_executable(RsvpTest
   ${REPO_ROOT}/lib/Rsvp/RsvpRefreshStats.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpSettings.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpSession.cpp
+  ${REPO_ROOT}/lib/Rsvp/RsvpCompanionPolicy.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpLexicalCore.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpWordLayout.cpp
   ${REPO_ROOT}/lib/Rsvp/VisibleContentStream.cpp

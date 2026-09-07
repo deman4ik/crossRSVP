@@ -20,6 +20,7 @@
 #include "ReaderLaunchMode.h"
 #include "ReaderUtils.h"
 #include "RsvpCheckpointFile.h"
+#include "SdCardFontSystem.h"
 #include "activities/ActivityManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -129,9 +130,9 @@ bool RsvpReaderActivity::loadBook() {
   pacing.clausePausePercent = static_cast<uint16_t>(SETTINGS.rsvpClausePauseTenths) * 10;
   pacing.sentencePausePercent = static_cast<uint16_t>(SETTINGS.rsvpSentencePauseTenths) * 10;
   pacing.paragraphPausePercent = static_cast<uint16_t>(SETTINGS.rsvpParagraphPauseTenths) * 10;
-  bool contextLineEnabled = SETTINGS.rsvpContextLine != 0;
+  bool groupingEnabled = SETTINGS.rsvpShortWordGroupingEnabled != 0;
   bool contextUsesSdFont = false;
-  if (contextLineEnabled) {
+  if (groupingEnabled) {
     for (int pointSize = SETTINGS.rsvpFontSize; pointSize >= CrossPointSettings::RSVP_FONT_SIZE_MIN;
          pointSize -= CrossPointSettings::RSVP_FONT_SIZE_STEP) {
       if (renderer.isSdCardFont(SETTINGS.getReaderFontIdAtSize(static_cast<uint8_t>(pointSize)))) {
@@ -140,36 +141,45 @@ bool RsvpReaderActivity::loadBook() {
       }
     }
   }
-  if (contextLineEnabled && contextUsesSdFont) {
+  if (groupingEnabled && contextUsesSdFont) {
     // Keep the SD advance collector and bounded tables alive for the activity
-    // so Context Line frames do not allocate advance buffers.
+    // so group measurements do not allocate advance buffers.
     sdFontAdvanceScratch = makeUniqueNoThrow<SdCardFont::AdvanceBuildScratch>();
     if (!sdFontAdvanceScratch) {
-      LOG_ERR("RSVP", "OOM: SD font Context Line scratch");
-      contextLineEnabled = false;
+      LOG_ERR("RSVP", "OOM: SD font grouping scratch");
+      groupingEnabled = false;
     } else {
       for (int pointSize = SETTINGS.rsvpFontSize; pointSize >= CrossPointSettings::RSVP_FONT_SIZE_MIN;
            pointSize -= CrossPointSettings::RSVP_FONT_SIZE_STEP) {
         const int fontId = SETTINGS.getReaderFontIdAtSize(static_cast<uint8_t>(pointSize));
         if (!renderer.reserveSdCardFontAdvanceTable(fontId, 0x03, SdCardFont::ADVANCE_BUILD_SCRATCH_CODEPOINTS)) {
-          LOG_ERR("RSVP", "OOM: SD font Context Line advance table");
+          LOG_ERR("RSVP", "OOM: SD font grouping advance table");
           sdFontAdvanceScratch.reset();
-          contextLineEnabled = false;
+          groupingEnabled = false;
           break;
         }
       }
     }
   }
-  session = makeUniqueNoThrow<rsvp::RsvpSession>(*source, initialAnchor, pacing, contextLineEnabled);
+  if (groupingEnabled && contextUsesSdFont) {
+    smallerSdFontId = sdFontSystem.loadSmallerReaderFont(renderer);
+    if (smallerSdFontId == 0 ||
+        !renderer.reserveSdCardFontAdvanceTable(smallerSdFontId, 0x01, SdCardFont::ADVANCE_BUILD_SCRATCH_CODEPOINTS)) {
+      LOG_ERR("RSVP", "Unable to prepare smaller SD font; disabling grouping");
+      groupingEnabled = false;
+    }
+  }
+  session = makeUniqueNoThrow<rsvp::RsvpSession>(*source, initialAnchor, pacing, groupingEnabled,
+                                                 &RsvpReaderActivity::fitPresentationGroup, this);
   if (!session) {
     LOG_ERR("RSVP", "Failed to allocate session");
     return enterFatalFallback(rsvp::Error::SourceOpen);
   }
-  LOG_INF("RSVP", "context-line=%s", contextLineEnabled ? "on" : "off");
+  LOG_INF("RSVP", "short-word-grouping=%s", groupingEnabled ? "on" : "off");
 
+  if (restoredFromCheckpoint) session->restoreAfterCheckpoint(restoredTokenHash32, restoredTokenLength);
   currentDecision = session->step({.nowMs = millis()});
-  if (restoredFromCheckpoint && (!currentDecision.render || session->requestedTokenHash() != restoredTokenHash32 ||
-                                 session->requestedTokenLength() != restoredTokenLength)) {
+  if (restoredFromCheckpoint && !session->checkpointIdentityValidated()) {
     LOG_INF("RSVP", "Checkpoint token identity no longer resolves; returning to Paged progress");
     currentDecision = {};
     switchToPagedPending = true;
@@ -335,12 +345,13 @@ void RsvpReaderActivity::switchToPaged() {
   }
   const auto anchor = session ? session->currentAnchor() : rsvp::ResumeAnchor{};
   const auto decision = rsvp::RsvpModeSwitch::fromRsvp(anchor);
-  saveCheckpoint();
+  const bool checkpointSaved = saveCheckpoint();
   activityManager.goToReader(
       bookPath, false,
       ReaderLaunchContext{ReaderLaunchMode::Paged, decision.anchor, decision.temporaryHighlight && anchor.valid,
                           session ? session->currentTokenHash() : 0,
-                          session ? session->currentTokenLength() : uint16_t{0}, false, false, bookRevision});
+                          session ? session->currentTokenLength() : uint16_t{0},
+                          checkpointSaved && SETTINGS.rsvpShortWordGroupingEnabled != 0, false, bookRevision});
 }
 
 void RsvpReaderActivity::onExit() {
@@ -379,7 +390,8 @@ bool copyRange(const rsvp::PreparedWord& word, const uint16_t begin, const uint1
 }
 }  // namespace
 
-bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word, const rsvp::ContextWindow* context) {
+bool RsvpReaderActivity::measurePresentationGroup(const rsvp::PreparedWord& word,
+                                                  const rsvp::PresentationGroup* group) {
   if (!word.valid || !copyRange(word, 0, word.pivot.begin, prefixBuffer) ||
       !copyRange(word, word.pivot.begin, word.pivot.end, pivotBuffer) ||
       !copyRange(word, word.pivot.end, word.textLength, suffixBuffer)) {
@@ -391,84 +403,104 @@ bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word, const 
   int marginBottom = 0;
   int marginLeft = 0;
   renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
-  const int left = marginLeft + 12;
-  const int right = renderer.getScreenWidth() - marginRight - 12;
-  const int focusX = left + (right - left) / 2;
-
-  const char* frameText[rsvp::CONTEXT_WINDOW_CAPACITY] = {word.text};
+  groupLayoutInput = {};
+  groupLayoutInput.leftBound = marginLeft + 12;
+  groupLayoutInput.rightBound = renderer.getScreenWidth() - marginRight - 12;
+  groupLayoutInput.focusX = (groupLayoutInput.leftBound + groupLayoutInput.rightBound) / 2;
+  const char* frameText[3] = {word.text};
   size_t frameTextCount = 1;
-  if (context && context->activeIndex < context->count) {
-    frameTextCount = context->count;
-    for (uint8_t index = 0; index < context->count; ++index) frameText[index] = context->tokens[index].text;
+  if (group && group->count != 0 && group->count <= 3 && group->activeIndex < group->count) {
+    frameTextCount = group->count;
+    for (uint8_t index = 0; index < group->count; ++index) frameText[index] = group->tokens[index].text;
+    groupLayoutInput.count = group->count;
+    groupLayoutInput.activeIndex = group->activeIndex;
   }
 
-  rsvp::RsvpWordLayout activeLayout;
-  int fontId = 0;
+  rsvp::RsvpWordLayout active;
   int resolvedPointSize = 0;
   for (int pointSize = SETTINGS.rsvpFontSize; pointSize >= CrossPointSettings::RSVP_FONT_SIZE_MIN;
        pointSize -= CrossPointSettings::RSVP_FONT_SIZE_STEP) {
-    fontId = SETTINGS.getReaderFontIdAtSize(static_cast<uint8_t>(pointSize));
+    activeFontId = SETTINGS.getReaderFontIdAtSize(static_cast<uint8_t>(pointSize));
     if (sdFontAdvanceScratch) {
-      renderer.ensureSdCardFontReady(fontId, frameText, frameTextCount, *sdFontAdvanceScratch, 0x03);
+      renderer.ensureSdCardFontReady(activeFontId, frameText, frameTextCount, *sdFontAdvanceScratch, 0x03);
     } else {
-      renderer.ensureSdCardFontReady(fontId, frameText, frameTextCount, 0x03);
+      renderer.ensureSdCardFontReady(activeFontId, frameText, frameTextCount, 0x03);
     }
-    const int prefixAdvance = renderer.getTextAdvanceX(fontId, prefixBuffer, EpdFontFamily::REGULAR);
-    const int pivotAdvance = renderer.getTextAdvanceX(fontId, pivotBuffer, EpdFontFamily::BOLD);
-    const int suffixAdvance = renderer.getTextAdvanceX(fontId, suffixBuffer, EpdFontFamily::REGULAR);
-    if (rsvp::calculateRsvpWordLayout(focusX, left, right, prefixAdvance, pivotAdvance, suffixAdvance, activeLayout)) {
+    groupLayoutInput.prefixAdvance = renderer.getTextAdvanceX(activeFontId, prefixBuffer, EpdFontFamily::REGULAR);
+    groupLayoutInput.pivotAdvance = renderer.getTextAdvanceX(activeFontId, pivotBuffer, EpdFontFamily::BOLD);
+    groupLayoutInput.suffixAdvance = renderer.getTextAdvanceX(activeFontId, suffixBuffer, EpdFontFamily::REGULAR);
+    if (rsvp::calculateRsvpWordLayout(groupLayoutInput.focusX, groupLayoutInput.leftBound, groupLayoutInput.rightBound,
+                                      groupLayoutInput.prefixAdvance, groupLayoutInput.pivotAdvance,
+                                      groupLayoutInput.suffixAdvance, active)) {
       resolvedPointSize = pointSize;
       break;
     }
   }
-  if (!activeLayout.fits || fontId == 0) return false;
+  if (!active.fits || activeFontId == 0) return false;
 
-  contextLineInput = {};
-  contextLineInput.focusX = focusX;
-  contextLineInput.leftBound = left;
-  contextLineInput.rightBound = right;
-  contextLineInput.gap = renderer.getTextAdvanceX(fontId, " ", EpdFontFamily::REGULAR);
-  contextLineInput.fontSize = resolvedPointSize;
-  contextLineInput.prefixAdvance = activeLayout.prefixAdvance;
-  contextLineInput.pivotAdvance = activeLayout.pivotAdvance;
-  contextLineInput.suffixAdvance = activeLayout.suffixAdvance;
-  if (context && context->activeIndex < context->count) {
-    contextLineInput.leftCount = std::min<uint8_t>(context->activeIndex, rsvp::CONTEXT_SIDE_CAPACITY);
-    contextLineInput.rightCount =
-        std::min<uint8_t>(static_cast<uint8_t>(context->count - context->activeIndex - 1), rsvp::CONTEXT_SIDE_CAPACITY);
-    for (uint8_t index = 0; index < contextLineInput.leftCount; ++index) {
-      const auto& token = context->tokens[context->activeIndex - index - 1];
-      contextLineInput.leftNearest[index] = {renderer.getTextAdvanceX(fontId, token.text, EpdFontFamily::REGULAR),
-                                             token.punctuation};
-    }
-    for (uint8_t index = 0; index < contextLineInput.rightCount; ++index) {
-      const auto& token = context->tokens[context->activeIndex + index + 1];
-      contextLineInput.rightNearest[index] = {renderer.getTextAdvanceX(fontId, token.text, EpdFontFamily::REGULAR),
-                                              token.punctuation};
+  companionFontId = activeFontId;
+  if (frameTextCount > 1) {
+    companionFontId = renderer.isSdCardFont(activeFontId)
+                          ? smallerSdFontId
+                          : SETTINGS.getReaderFontIdAtSize(static_cast<uint8_t>(
+                                std::max<int>(CrossPointSettings::RSVP_FONT_SIZE_MIN,
+                                              resolvedPointSize - CrossPointSettings::RSVP_FONT_SIZE_STEP)));
+    if (companionFontId == 0) return false;
+    if (sdFontAdvanceScratch) {
+      renderer.ensureSdCardFontReady(companionFontId, frameText, frameTextCount, *sdFontAdvanceScratch,
+                                     companionFontId == activeFontId ? 0x03 : 0x01);
+    } else {
+      renderer.ensureSdCardFontReady(companionFontId, frameText, frameTextCount, 0x01);
     }
   }
-  if (!rsvp::calculateRsvpContextLineLayout(contextLineInput, contextLineLayout)) return false;
+  groupLayoutInput.gap = renderer.getTextAdvanceX(companionFontId, " ", EpdFontFamily::REGULAR);
+  if (group) {
+    for (uint8_t index = 0; index < groupLayoutInput.count; ++index) {
+      if (index != groupLayoutInput.activeIndex) {
+        groupLayoutInput.advances[index] =
+            renderer.getTextAdvanceX(companionFontId, group->tokens[index].text, EpdFontFamily::REGULAR);
+      }
+    }
+  }
+  return rsvp::calculateRsvpGroupLayout(groupLayoutInput, groupLayout);
+}
 
+rsvp::GroupRange RsvpReaderActivity::fitPresentationGroup(void* context, const rsvp::PreparedWord& word,
+                                                          const rsvp::PresentationGroup& group) {
+  auto& activity = *static_cast<RsvpReaderActivity*>(context);
+  if (!activity.measurePresentationGroup(word, &group)) {
+    return {group.activeIndex, static_cast<uint8_t>(group.activeIndex + 1)};
+  }
+  return {activity.groupLayout.begin, activity.groupLayout.end};
+}
+
+bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word, const rsvp::PresentationGroup* group) {
+  if (!measurePresentationGroup(word, group)) return false;
+  // Membership was resolved by the session before source consumption.
+  if (group && (groupLayout.begin != 0 || groupLayout.end != group->count)) return false;
+
+  int marginTop = 0;
+  int marginRight = 0;
+  int marginBottom = 0;
+  int marginLeft = 0;
+  renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
   const int usableBottom = renderer.getScreenHeight() - marginBottom;
-  const int lineHeight = renderer.getLineHeight(fontId);
+  const int lineHeight = renderer.getLineHeight(activeFontId);
   const int y = marginTop + (usableBottom - marginTop - lineHeight) / 2;
-  if (context && context->activeIndex < context->count) {
-    for (uint8_t index = 0; index < contextLineInput.leftCount; ++index) {
-      if (!contextLineLayout.leftVisible[index]) continue;
-      const auto& token = context->tokens[context->activeIndex - index - 1];
-      renderer.drawText(fontId, contextLineLayout.leftX[index], y, token.text, true, EpdFontFamily::REGULAR);
-    }
-    for (uint8_t index = 0; index < contextLineInput.rightCount; ++index) {
-      if (!contextLineLayout.rightVisible[index]) continue;
-      const auto& token = context->tokens[context->activeIndex + index + 1];
-      renderer.drawText(fontId, contextLineLayout.rightX[index], y, token.text, true, EpdFontFamily::REGULAR);
+  const int companionY = y + (lineHeight - renderer.getLineHeight(companionFontId)) / 2;
+  if (group) {
+    for (uint8_t index = 0; index < group->count; ++index) {
+      if (index == group->activeIndex) continue;
+      renderer.drawText(companionFontId, groupLayout.positions[index], companionY, group->tokens[index].text, true,
+                        EpdFontFamily::REGULAR);
     }
   }
-  renderer.drawText(fontId, contextLineLayout.active.prefixX, y, prefixBuffer, true, EpdFontFamily::REGULAR);
-  renderer.drawText(fontId, contextLineLayout.active.pivotX, y, pivotBuffer, true, EpdFontFamily::BOLD);
-  renderer.drawText(fontId, contextLineLayout.active.suffixX, y, suffixBuffer, true, EpdFontFamily::REGULAR);
+  renderer.drawText(activeFontId, groupLayout.active.prefixX, y, prefixBuffer, true, EpdFontFamily::REGULAR);
+  renderer.drawText(activeFontId, groupLayout.active.pivotX, y, pivotBuffer, true, EpdFontFamily::BOLD);
+  renderer.drawText(activeFontId, groupLayout.active.suffixX, y, suffixBuffer, true, EpdFontFamily::REGULAR);
 
   if (SETTINGS.rsvpGuideStyle != CrossPointSettings::RSVP_GUIDES_OFF) {
+    const int focusX = groupLayoutInput.focusX;
     renderer.drawLine(focusX, std::max(marginTop, y - 22), focusX, std::max(marginTop, y - 8), 2, true);
     renderer.drawLine(focusX, std::min(usableBottom - 1, y + lineHeight + 8), focusX,
                       std::min(usableBottom - 1, y + lineHeight + 22), 2, true);
@@ -526,7 +558,7 @@ void RsvpReaderActivity::renderBook() {
     // line strings only when a translation exceeds the oriented safe width.
     UITheme::drawCenteredWrappedText(renderer, messageBounds, UI_12_FONT_ID, message, 3, true, EpdFontFamily::BOLD);
   } else if (!currentDecision.frame.preparedWord ||
-             !drawPreparedWord(*currentDecision.frame.preparedWord, currentDecision.frame.contextWindow)) {
+             !drawPreparedWord(*currentDecision.frame.preparedWord, currentDecision.frame.presentationGroup)) {
     renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() / 2, tr(STR_RSVP_BOUNDARY_LONG_WORD), true,
                               EpdFontFamily::BOLD);
     wordDoesNotFitPending.store(true);
@@ -554,6 +586,14 @@ void RsvpReaderActivity::renderBook() {
           ESP.getFreeHeap());
 
   if (message == nullptr && !wordDoesNotFitPending.load()) {
+#ifdef SIMULATOR
+    const auto* group = currentDecision.frame.presentationGroup;
+    if (group) {
+      LOG_INF("RSVP", "group count=%u active=%u words=%s|%s|%s", group->count, group->activeIndex,
+              group->tokens[0].text, group->count > 1 ? group->tokens[1].text : "",
+              group->count > 2 ? group->tokens[2].text : "");
+    }
+#endif
     const auto acknowledgement = session->step({.nowMs = millis(),
                                                 .action = rsvp::Action::FramePresented,
                                                 .presentedFrameId = currentDecision.frame.id,

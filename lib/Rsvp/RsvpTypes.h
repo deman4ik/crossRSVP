@@ -5,9 +5,9 @@
 
 namespace rsvp {
 
+struct PreparedWord;
+
 constexpr size_t MAX_TOKEN_BYTES = 200;
-constexpr uint8_t CONTEXT_SIDE_CAPACITY = 3;
-constexpr uint8_t CONTEXT_WINDOW_CAPACITY = CONTEXT_SIDE_CAPACITY * 2 + 1;
 
 struct ResumeAnchor {
   uint16_t spineIndex = 0;
@@ -91,19 +91,29 @@ struct Input {
   uint32_t refreshDurationMs = 0;
 };
 
-struct PreparedWord;
-
-struct ContextWindowToken {
+// The session owns this fixed-size view until the next step.  Token storage is
+// backed by the session's existing event/read-ahead buffers; no group allocates.
+struct PresentationGroupToken {
   const char* text = nullptr;
   uint16_t textLength = 0;
-  bool punctuation = false;
+  ResumeAnchor anchor;
 };
 
-struct ContextWindow {
-  ContextWindowToken tokens[CONTEXT_WINDOW_CAPACITY] = {};
+struct PresentationGroup {
+  PresentationGroupToken tokens[3] = {};
   uint8_t count = 0;
   uint8_t activeIndex = 0;
 };
+
+struct PresentationGroupRange {
+  uint8_t begin = 0;
+  uint8_t end = 0;  // exclusive; range must contain the active token
+};
+
+using GroupToken = PresentationGroupToken;
+using GroupRange = PresentationGroupRange;
+using PresentationGroupFitCallback = PresentationGroupRange (*)(void* context, const PreparedWord& activeWord,
+                                                                const PresentationGroup& group);
 
 struct Frame {
   uint32_t id = 0;
@@ -112,7 +122,7 @@ struct Frame {
   uint16_t textLength = 0;
   ResumeAnchor anchor;
   const PreparedWord* preparedWord = nullptr;
-  const ContextWindow* contextWindow = nullptr;
+  const PresentationGroup* presentationGroup = nullptr;
 };
 
 struct Decision {

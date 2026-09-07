@@ -281,9 +281,9 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Toggle(StrId::STR_EMBEDDED_STYLE, &CrossPointSettings::embeddedStyle, "embeddedStyle",
                             StrId::STR_CAT_READER)
             .withTextSettings(),
+        // Keep Focus Reading in both the flat Reader list and Text Settings > Style.
         SettingInfo::Toggle(StrId::STR_FOCUS_READING, &CrossPointSettings::focusReadingEnabled, "focusReadingEnabled",
-                            StrId::STR_CAT_READER)
-            .withTextSettings(),
+                            StrId::STR_CAT_READER),
         SettingInfo::Toggle(StrId::STR_HYPHENATION, &CrossPointSettings::hyphenationEnabled, "hyphenationEnabled",
                             StrId::STR_CAT_READER)
             .withTextSettings(),
@@ -302,8 +302,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Enum(StrId::STR_RSVP_GUIDES, &CrossPointSettings::rsvpGuideStyle,
                           {StrId::STR_RSVP_GUIDES_OFF, StrId::STR_RSVP_GUIDES_ON}, "rsvpGuideStyle",
                           StrId::STR_CAT_READER),
-        SettingInfo::Toggle(StrId::STR_RSVP_CONTEXT_LINE, &CrossPointSettings::rsvpContextLine,
-                            rsvp::CONTEXT_LINE_SETTING_KEY, StrId::STR_CAT_READER),
+        SettingInfo::Toggle(StrId::STR_RSVP_SHORT_WORD_GROUPING, &CrossPointSettings::rsvpShortWordGroupingEnabled,
+                            rsvp::SHORT_WORD_GROUPING_SETTING_KEY, StrId::STR_CAT_READER),
         SettingInfo::Value(StrId::STR_RSVP_CLAUSE_PAUSE, &CrossPointSettings::rsvpClausePauseTenths,
                            {CrossPointSettings::RSVP_PAUSE_MIN_TENTHS, CrossPointSettings::RSVP_PAUSE_MAX_TENTHS, 1},
                            "rsvpClausePauseTenths", StrId::STR_CAT_READER),

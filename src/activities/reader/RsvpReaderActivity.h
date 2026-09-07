@@ -33,7 +33,10 @@ class RsvpReaderActivity final : public ReaderActivity {
   bool isAtEndOfBook() const override { return false; }
   void renderBook() override;
   void applyDecision(const rsvp::Decision& decision);
-  bool drawPreparedWord(const rsvp::PreparedWord& word, const rsvp::ContextWindow* context);
+  bool measurePresentationGroup(const rsvp::PreparedWord& word, const rsvp::PresentationGroup* group);
+  bool drawPreparedWord(const rsvp::PreparedWord& word, const rsvp::PresentationGroup* group);
+  static rsvp::GroupRange fitPresentationGroup(void* context, const rsvp::PreparedWord& word,
+                                               const rsvp::PresentationGroup& group);
   void drawStatus() const;
   const char* pauseMessage() const;
   bool saveCheckpoint();
@@ -64,6 +67,9 @@ class RsvpReaderActivity final : public ReaderActivity {
   char prefixBuffer[rsvp::MAX_TOKEN_BYTES + 1] = {};
   char pivotBuffer[rsvp::MAX_TOKEN_BYTES + 1] = {};
   char suffixBuffer[rsvp::MAX_TOKEN_BYTES + 1] = {};
-  rsvp::ContextLineInput contextLineInput;
-  rsvp::ContextLineLayout contextLineLayout;
+  rsvp::GroupLayoutInput groupLayoutInput;
+  rsvp::GroupLayout groupLayout;
+  int activeFontId = 0;
+  int companionFontId = 0;
+  int smallerSdFontId = 0;
 };

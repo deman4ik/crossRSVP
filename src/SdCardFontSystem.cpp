@@ -176,3 +176,17 @@ int SdCardFontSystem::resolveFontId(const char* familyName, uint8_t /*pointSize*
   // that font's ID. ensureLoaded() must have run for the current settings first.
   return manager_.getFontId(familyName);
 }
+
+int SdCardFontSystem::loadSmallerReaderFont(GfxRenderer& renderer) {
+  const auto& name = manager_.currentFamilyName();
+  const auto* family = registry_.findFamily(name);
+  if (!family) return 0;
+  uint8_t smaller = 0;
+  for (const auto& file : family->files) {
+    if (file.style == 0 && file.pointSize < manager_.currentPointSize() && file.pointSize > smaller) {
+      smaller = file.pointSize;
+    }
+  }
+  if (smaller == 0) return manager_.getFontId(name);
+  return manager_.loadFamilyExtraSize(*family, renderer, smaller);
+}

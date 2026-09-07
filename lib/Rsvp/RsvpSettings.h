@@ -6,10 +6,10 @@
 
 namespace rsvp {
 
-inline constexpr uint8_t CONTEXT_LINE_DEFAULT = 0;
-inline constexpr char CONTEXT_LINE_SETTING_KEY[] = "rsvpContextLine";
+inline constexpr uint8_t SHORT_WORD_GROUPING_DEFAULT = 0;
+inline constexpr char SHORT_WORD_GROUPING_SETTING_KEY[] = "rsvpShortWordGrouping";
 
-uint8_t loadContextLineSetting(JsonVariantConst document);
-void saveContextLineSetting(JsonDocument& document, uint8_t enabled);
+uint8_t loadShortWordGroupingSetting(JsonVariantConst document);
+void saveShortWordGroupingSetting(JsonDocument& document, uint8_t enabled);
 
 }  // namespace rsvp

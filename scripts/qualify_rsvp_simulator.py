@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Run repeatable CrossRSVP v0.3.0 scenarios in the X3 simulator."""
+"""Run repeatable CrossRSVP v0.4.0 scenarios in the X3 simulator."""
 
 from __future__ import annotations
 
@@ -31,8 +31,9 @@ class Scenario:
     fatal_load: bool = False
     fixture_name: str = "default"
     quick_rsvp: bool = False
+    start_home: bool = False
     pace_wpm: int = 100
-    context_line: bool = False
+    short_word_grouping: bool = False
     refresh_latency_ms: int = 0
     input_script_after_wake: str = ""
     screenshots_after_wake: dict[int, str] | None = None
@@ -49,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=REPO_ROOT / "artifacts" / "rsvp-x3-v0.3.0" / "simulator",
+        default=REPO_ROOT / "artifacts" / "rsvp-x3-v0.4.0" / "simulator",
         help="directory for logs and BMP screenshots",
     )
     parser.add_argument(
@@ -74,7 +75,8 @@ def write_simulator_state(
     orientation: int,
     quick_rsvp: bool,
     pace_wpm: int,
-    context_line: bool,
+    short_word_grouping: bool,
+    start_home: bool,
 ) -> None:
     fs_root = run_root / "fs_"
     books = fs_root / "books"
@@ -91,19 +93,17 @@ def write_simulator_state(
         "rsvpFontSize": 14,
         "rsvpGuideStyle": 1,
         "rsvpPaceWpm": pace_wpm,
-        "rsvpContextLine": int(context_line),
+        "rsvpShortWordGrouping": int(short_word_grouping),
         "screenInverted": 1,
         "uiTheme": 1,
     }
     if quick_rsvp:
         settings["longPressMenuFunction"] = 5
-    state = {
-        "lastSleepFromReader": True,
-        "openEpubPath": "/books/rsvp-russian-qualification.epub",
-        "showBootScreen": False,
-    }
+    state = {"lastSleepFromReader": True, "showBootScreen": False}
+    if not start_home:
+        state["openEpubPath"] = "/books/rsvp-russian-qualification.epub"
     recent = {
-        "books": [
+        "books": [] if start_home else [
             {
                 "author": "CrossRSVP",
                 "coverBmpPath": "",
@@ -154,7 +154,8 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
             scenario.orientation,
             scenario.quick_rsvp,
             scenario.pace_wpm,
-            scenario.context_line,
+            scenario.short_word_grouping,
+            scenario.start_home,
         )
         env = os.environ.copy()
         env["CROSSPOINT_SIM_INPUT_SCRIPT"] = scenario.input_script
@@ -187,10 +188,10 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
             raise RuntimeError(f"{scenario.name}: simulator exited {completed.returncode}; see {log_path}")
         if "Hardware detect: X3" not in completed.stdout:
             raise RuntimeError(f"{scenario.name}: X3 profile was not detected")
-        if activity_entry_count(completed.stdout, "RsvpReader") == 0:
+        if scenario.name != "focus-settings" and activity_entry_count(completed.stdout, "RsvpReader") == 0:
             raise RuntimeError(f"{scenario.name}: RSVP activity was not entered")
-        if scenario.context_line and "[RSVP] context-line=on" not in completed.stdout:
-            raise RuntimeError(f"{scenario.name}: Context Line setting was not applied")
+        if scenario.short_word_grouping and "short-word-grouping=on" not in completed.stdout:
+            raise RuntimeError(f"{scenario.name}: Short-word grouping setting was not applied")
         if scenario.fatal_load:
             required = "Injected simulator RSVP source-open failure"
             if required not in completed.stdout or activity_entry_count(completed.stdout, "EpubReader") < 2:
@@ -245,16 +246,46 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
                 raise RuntimeError(f"{scenario.name}: RSVP activity was not entered exactly once")
             if activity_entry_count(completed.stdout, "EpubReader") < 2:
                 raise RuntimeError(f"{scenario.name}: Back during refresh did not switch to Paged Mode")
-        if scenario.name == "context-playback":
+        if scenario.name == "grouping-playback":
             frame_lines = [
                 line for line in completed.stdout.splitlines() if "[RSVP] refresh=fast" in line
             ]
             if len(frame_lines) < 6:
                 raise RuntimeError(
-                    f"{scenario.name}: playback did not produce enough context frames: {len(frame_lines)}"
+                    f"{scenario.name}: playback did not produce enough grouping frames: {len(frame_lines)}"
                 )
-            if any("heap=65536" not in line for line in frame_lines):
-                raise RuntimeError(f"{scenario.name}: simulated heap changed during playback")
+            # The simulator injects a fixed heap value; it cannot qualify real
+            # ESP32 heap stability. Check source membership instead.
+            expected_groups = (
+                "group count=1 active=0 words=Я||",
+                "group count=3 active=1 words=не|сделал|бы",
+                "group count=1 active=0 words=это,||",
+                "group count=3 active=2 words=а|он|пришёл",
+                "group count=2 active=1 words=в|дом.|",
+            )
+            cursor = 0
+            for expected in expected_groups:
+                found = completed.stdout.find(expected, cursor)
+                if found < 0:
+                    raise RuntimeError(f"{scenario.name}: missing ordered frame {expected!r}")
+                cursor = found + len(expected)
+        if scenario.name == "focus-settings":
+            if activity_entry_count(completed.stdout, "Settings") < 1:
+                raise RuntimeError(f"{scenario.name}: flat Settings activity was not entered")
+            if activity_entry_count(completed.stdout, "TextSettings") < 1:
+                raise RuntimeError(f"{scenario.name}: nested Text Settings activity was not entered")
+            persisted = json.loads((run_root / "fs_" / ".crosspoint" / "settings.json").read_text(encoding="utf-8"))
+            if persisted.get("focusReadingEnabled") != 0:
+                raise RuntimeError(f"{scenario.name}: nested Focus Reading toggle did not persist")
+        if scenario.name.startswith("orientation-"):
+            if "group count=3 active=1 words=не|сделал|бы" not in completed.stdout:
+                raise RuntimeError(f"{scenario.name}: three-word frame was not presented")
+        if scenario.name == "grouping-resume":
+            entries = completed.stdout.split("Entering activity: RsvpReader")
+            if len(entries) != 3 or "group count=1 active=0 words=это,||" not in entries[-1]:
+                raise RuntimeError("grouping-resume: re-entry did not continue after the whole group")
+            if "group count=1 active=0 words=бы||" in entries[-1]:
+                raise RuntimeError("grouping-resume: saved companion was replayed")
         expected_pause = {
             "boundary-image": "pause=image",
             "boundary-chapter": "pause=chapter",
@@ -326,11 +357,11 @@ def validate_reopened_highlight(output: Path) -> None:
         raise RuntimeError("highlight-reopen: reopening Paged did not restore the active-word highlight")
 
 
-def validate_context_line_screenshots(output: Path) -> None:
-    context_off = output / "context-off.bmp"
-    context_on = output / "context-playback.bmp"
-    if filecmp.cmp(context_off, context_on, shallow=False):
-        raise RuntimeError("context-playback: enabled Context Line did not change the rendered frame")
+def validate_short_word_grouping_screenshots(output: Path) -> None:
+    grouping_off = output / "grouping-off.bmp"
+    grouping_on = output / "grouping-playback.bmp"
+    if filecmp.cmp(grouping_off, grouping_on, shallow=False):
+        raise RuntimeError("short-word-grouping: enabled grouping did not change the rendered frame")
 
 
 def scenarios() -> list[Scenario]:
@@ -382,24 +413,46 @@ def scenarios() -> list[Scenario]:
             name="high-speed-controls",
             orientation=0,
             input_script=(
-                f"{enter_rsvp};3900:ENTER;4400:ENTER;5600:ENTER;5900:BACK;7600:QUIT"
+                "3500:ENTER;4500:DOWN;5200:DOWN;5900:DOWN;6600:ENTER;"
+                "7700:ENTER;8200:ENTER;9400:ENTER;9700:BACK;12000:QUIT"
             ),
             screenshots={},
             pace_wpm=240,
             refresh_latency_ms=450,
         ),
         Scenario(
-            name="context-off",
+            name="focus-settings",
             orientation=0,
-            input_script=f"{enter_rsvp};4600:ENTER;11000:QUIT",
-            screenshots={9600: "context-off.bmp"},
+            # Enable the direct Reader row, inspect Style, then disable it there
+            # and return to Reader. Both paths must edit the same saved value.
+            input_script=(
+                "1200:DOWN;1600:DOWN;2000:DOWN;2400:ENTER;"
+                "4200:ENTER;4600:DOWN;5000:DOWN;5400:DOWN;5600:ENTER;"
+                "6000:UP;6400:UP;6800:ENTER;7400:ENTER;7800:ENTER;8200:ENTER;"
+                "9600:DOWN;10000:ENTER;10600:BACK;11400:DOWN;11800:DOWN;13500:QUIT"
+            ),
+            screenshots={
+                5500: "focus-reader.bmp",
+                9400: "focus-style.bmp",
+                10400: "focus-style-disabled.bmp",
+                12600: "focus-reader-return.bmp",
+            },
+            start_home=True,
         ),
         Scenario(
-            name="context-playback",
+            name="grouping-off",
             orientation=0,
             input_script=f"{enter_rsvp};4600:ENTER;11000:QUIT",
-            screenshots={9600: "context-playback.bmp"},
-            context_line=True,
+            screenshots={9600: "grouping-off.bmp"},
+            fixture_name="grouping",
+        ),
+        Scenario(
+            name="grouping-playback",
+            orientation=0,
+            input_script=f"{enter_rsvp};4600:ENTER;11000:QUIT",
+            screenshots={9600: "grouping-playback.bmp"},
+            fixture_name="grouping",
+            short_word_grouping=True,
         ),
         Scenario(
             name="highlight-reopen",
@@ -409,13 +462,25 @@ def scenarios() -> list[Scenario]:
             input_script_after_wake="5000:QUIT",
             screenshots_after_wake={3500: "highlight-after-reopen.bmp"},
         ),
+        Scenario(
+            name="grouping-resume",
+            orientation=0,
+            input_script=(
+                f"{enter_rsvp};4100:DOWN;5000:BACK;6500:ENTER;"
+                "7100:DOWN;7500:DOWN;7900:DOWN;8300:ENTER;10500:QUIT"
+            ),
+            screenshots={4600: "grouping-before-exit.bmp", 9500: "grouping-after-reentry.bmp"},
+            fixture_name="grouping",
+            short_word_grouping=True,
+        ),
         *[
             Scenario(
                 name=f"orientation-{orientation}",
                 orientation=orientation,
-                input_script=f"{enter_rsvp};5400:QUIT",
+                input_script=f"{enter_rsvp};4000:DOWN;5400:QUIT",
                 screenshots={4500: f"orientation-{orientation}-paused.bmp"},
-                context_line=True,
+                fixture_name="grouping",
+                short_word_grouping=True,
             )
             for orientation in range(4)
         ],
@@ -449,7 +514,22 @@ def main() -> int:
             check=True,
             cwd=REPO_ROOT,
         )
-        fixtures = {"default": fixture, "chapter": chapter_fixture}
+        grouping_source = fixture_root / "grouping-source"
+        shutil.copytree(FIXTURE_SOURCE, grouping_source)
+        (grouping_source / "OEBPS" / "chapter.xhtml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<html xmlns="http://www.w3.org/1999/xhtml" lang="ru">'
+            "<head><title>RSVP short-word grouping fixture</title></head>"
+            "<body><p>Я не сделал бы это, а он пришёл в дом.</p></body></html>\n",
+            encoding="utf-8",
+        )
+        grouping_fixture = fixture_root / "rsvp-russian-short-word-grouping.epub"
+        subprocess.run(
+            [sys.executable, str(FIXTURE_BUILDER), str(grouping_source), str(grouping_fixture)],
+            check=True,
+            cwd=REPO_ROOT,
+        )
+        fixtures = {"default": fixture, "chapter": chapter_fixture, "grouping": grouping_fixture}
         available = scenarios()
         selected = [scenario for scenario in available if not args.scenario or scenario.name in args.scenario]
         unknown = set(args.scenario or ()) - {scenario.name for scenario in available}
@@ -464,8 +544,8 @@ def main() -> int:
             validate_boundary_skip_screenshots(output)
         if any(scenario.name == "highlight-reopen" for scenario in selected):
             validate_reopened_highlight(output)
-        if {scenario.name for scenario in selected}.issuperset({"context-off", "context-playback"}):
-            validate_context_line_screenshots(output)
+        if {scenario.name for scenario in selected}.issuperset({"grouping-off", "grouping-playback"}):
+            validate_short_word_grouping_screenshots(output)
         if {scenario.name for scenario in selected}.issuperset({f"orientation-{orientation}" for orientation in range(4)}):
             validate_orientation_screenshots(output)
 

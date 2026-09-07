@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstring>
 
+#include "RsvpCompanionPolicy.h"
+
 namespace rsvp {
 
 namespace {
@@ -53,48 +55,53 @@ uint32_t nextCodepoint(const char* text, const uint16_t length, uint16_t& offset
   return codepoint;
 }
 
-bool endsSentence(const char* text, const uint16_t length) {
-  uint32_t lastSignificant = 0;
-  for (uint16_t offset = 0; offset < length;) {
-    const uint32_t codepoint = nextCodepoint(text, length, offset);
-    if (!isClosingCodepoint(codepoint)) lastSignificant = codepoint;
-  }
-  return isSentenceTerminal(lastSignificant);
-}
-
-bool wordEndsSentence(const char* text, const uint16_t length) {
-  PreparedWord word;
-  return prepareRsvpWord(text, length, word) && word.pauseClass == PauseClass::Sentence;
-}
-
 }  // namespace
 
 RsvpSession::RsvpSession(RsvpSource& source, const ResumeAnchor initialAnchor, const RsvpPacingConfig pacing,
-                         const bool contextLineEnabled)
+                         const bool groupingEnabled, PresentationGroupFitCallback fitCallback, void* fitContext)
     : source(source),
       initialAnchor(initialAnchor),
       pacing(pacing),
-      contextLineEnabled(contextLineEnabled),
+      groupingEnabled(groupingEnabled),
+      fitCallback(fitCallback),
+      fitContext(fitContext),
       paceWpm(clampPace(pacing.paceWpm, pacing)) {}
 
-uint32_t RsvpSession::baseIntervalMs() const { return 60000u / std::max<uint16_t>(1, paceWpm); }
+void RsvpSession::restoreAfterCheckpoint(uint32_t hash, uint16_t length) {
+  restoreIdentityPending = true;
+  restoreTokenHash = hash;
+  restoreTokenLength = length;
+}
 
-uint32_t RsvpSession::tokenHash(const PreparedWord& word) {
+uint32_t RsvpSession::baseIntervalMs() const { return 60000u / std::max<uint16_t>(1, paceWpm); }
+uint16_t RsvpSession::effectiveMaximumWpm() const { return std::min(pacing.maximumWpm, pacing.safeMaximumWpm); }
+
+uint32_t RsvpSession::tokenHash(const char* text, uint16_t length) {
   uint32_t hash = 2166136261U;
-  for (uint16_t index = 0; index < word.textLength; ++index) {
-    hash ^= static_cast<uint8_t>(word.text[index]);
+  for (uint16_t index = 0; index < length; ++index) {
+    hash ^= static_cast<uint8_t>(text[index]);
     hash *= 16777619U;
   }
   return hash;
 }
 
-uint32_t RsvpSession::currentTokenHash() const { return presentedTokenHash32; }
+ResumeAnchor RsvpSession::requestedAnchor() const {
+  return consumedCount != 0 ? events[consumedCount - 1].anchor : ResumeAnchor{};
+}
+uint32_t RsvpSession::requestedTokenHash() const {
+  if (consumedCount == 0) return 0;
+  PreparedWord last;
+  const auto& event = events[consumedCount - 1];
+  return prepareRsvpWord(event.text, event.textLength, last) ? tokenHash(last.text, last.textLength) : 0;
+}
+uint16_t RsvpSession::requestedTokenLength() const {
+  if (consumedCount == 0) return 0;
+  PreparedWord last;
+  const auto& event = events[consumedCount - 1];
+  return prepareRsvpWord(event.text, event.textLength, last) ? last.textLength : 0;
+}
 
-uint32_t RsvpSession::requestedTokenHash() const { return tokenHash(preparedWord); }
-
-uint16_t RsvpSession::effectiveMaximumWpm() const { return std::min(pacing.maximumWpm, pacing.safeMaximumWpm); }
-
-PauseReason RsvpSession::pauseReasonFor(const NonTextKind kind) {
+PauseReason RsvpSession::pauseReasonFor(NonTextKind kind) {
   switch (kind) {
     case NonTextKind::Image:
       return PauseReason::Image;
@@ -102,43 +109,52 @@ PauseReason RsvpSession::pauseReasonFor(const NonTextKind kind) {
       return PauseReason::Table;
     case NonTextKind::HorizontalRule:
       return PauseReason::HorizontalRule;
-    case NonTextKind::Other:
-    case NonTextKind::None:
+    default:
       return PauseReason::OtherContent;
   }
-  return PauseReason::OtherContent;
 }
 
-uint16_t RsvpSession::punctuationPausePercent(const char* text, const uint16_t length, const RsvpPacingConfig& pacing) {
-  uint32_t lastSignificant = 0;
+uint16_t RsvpSession::punctuationPausePercent(const char* text, uint16_t length, const RsvpPacingConfig& pacing) {
+  uint32_t last = 0;
   for (uint16_t offset = 0; offset < length;) {
-    const uint32_t codepoint = nextCodepoint(text, length, offset);
-    if (!isClosingCodepoint(codepoint)) lastSignificant = codepoint;
+    const uint32_t cp = nextCodepoint(text, length, offset);
+    if (!isClosingCodepoint(cp)) last = cp;
   }
-
-  if (isSentenceTerminal(lastSignificant)) {
-    return pacing.sentencePausePercent;
-  }
-  if (lastSignificant == ',' || lastSignificant == ';' || lastSignificant == ':' || lastSignificant == 0x2014) {
+  if (isSentenceTerminal(last)) return pacing.sentencePausePercent;
+  if (last == ',' || last == ';' || last == ':' || last == '-' || last == 0x2013 || last == 0x2014) {
     return pacing.clausePausePercent;
   }
   return 100;
 }
 
-uint16_t RsvpSession::currentPausePercent() const { return framePausePercent; }
+bool RsvpSession::boundaryBefore(const DocumentEvent& event) {
+  if (!prepareRsvpWord(event.text, event.textLength, boundaryScratch)) return true;
+  for (uint16_t offset = 0; offset < boundaryScratch.core.begin;) {
+    if (isRsvpGroupingBoundary(nextCodepoint(boundaryScratch.text, boundaryScratch.textLength, offset))) return true;
+  }
+  return false;
+}
+
+bool RsvpSession::boundaryAfter(const DocumentEvent& event) {
+  if (!prepareRsvpWord(event.text, event.textLength, boundaryScratch)) return true;
+  for (uint16_t offset = boundaryScratch.core.end; offset < boundaryScratch.textLength;) {
+    if (isRsvpGroupingBoundary(nextCodepoint(boundaryScratch.text, boundaryScratch.textLength, offset))) return true;
+  }
+  return false;
+}
 
 void RsvpSession::fillDecision(Decision& decision) const {
   decision.state = state;
   decision.pauseReason = PauseReason::None;
   if (state == State::Boundary) decision.pauseReason = fallbackReason;
   if (state == State::Error) decision.pauseReason = PauseReason::Error;
-  if (state == State::Paused && chapterPending) decision.pauseReason = PauseReason::Chapter;
+  if (state == State::Paused && chapterPauseShown) decision.pauseReason = PauseReason::Chapter;
   decision.nextDeadlineMs = nextDeadlineMs;
   decision.paceWpm = paceWpm;
   decision.checkpointRequested = decision.checkpointRequested || checkpointRequestedThisStep;
-  if (contextLineEnabled && (state == State::Paused || state == State::Playing) &&
-      !(state == State::Paused && chapterPending) && preparedWord.valid && contextWindow.count != 0) {
-    decision.frame.contextWindow = &contextWindow;
+  if ((state == State::Paused || state == State::Playing) && !chapterPauseShown && preparedWord.valid &&
+      presentationGroup.count != 0) {
+    decision.frame.presentationGroup = &presentationGroup;
   }
   if (state == State::Error) {
     decision.switchToPaged = true;
@@ -146,162 +162,49 @@ void RsvpSession::fillDecision(Decision& decision) const {
   }
 }
 
-void RsvpSession::setError(Decision& decision, const Error error) {
+void RsvpSession::setError(Decision& decision, Error error) {
   state = State::Error;
   fallbackReason = PauseReason::Error;
   framePresented = false;
   nextDeadlineMs = 0;
+  decision = {};
   decision.error = error;
   decision.pagedModeAvailable = true;
   checkpointRequestedThisStep = true;
   fillDecision(decision);
 }
 
-void RsvpSession::clearReadAhead() {
-  readAheadCount = 0;
-  readAheadTextUsed = 0;
-  deferredEventValid = false;
-}
-
-bool RsvpSession::bufferNextEvent() {
-  if (readAheadCount >= READ_AHEAD_EVENT_CAPACITY) return false;
-
-  DocumentEvent candidate;
-  if (deferredEventValid) {
-    candidate = deferredEvent;
-  } else if (!source.next(candidate)) {
-    candidate = {};
-    candidate.kind = EventKind::Error;
-  }
-
-  const uint16_t storageLength = candidate.textLength == 0 ? 0 : static_cast<uint16_t>(candidate.textLength + 1);
-  if (readAheadTextUsed + storageLength > READ_AHEAD_TEXT_CAPACITY) {
-    deferredEvent = candidate;
-    deferredEventValid = true;
-    return false;
-  }
-
-  auto& buffered = readAhead[readAheadCount++];
-  buffered.kind = candidate.kind;
-  buffered.anchor = candidate.anchor;
-  buffered.nonText = candidate.nonText;
-  buffered.textOffset = readAheadTextUsed;
-  buffered.textLength = candidate.textLength;
-  if (candidate.textLength != 0) {
-    memcpy(readAheadText + readAheadTextUsed, candidate.text, candidate.textLength);
-    readAheadText[readAheadTextUsed + candidate.textLength] = '\0';
-    readAheadTextUsed = static_cast<uint16_t>(readAheadTextUsed + storageLength);
-  }
-  deferredEventValid = false;
-  return true;
-}
-
-bool RsvpSession::peekReadAhead(const uint8_t index, DocumentEvent& event) const {
-  if (index >= readAheadCount) return false;
-  const auto& buffered = readAhead[index];
-  event = {};
-  event.kind = buffered.kind;
-  event.anchor = buffered.anchor;
-  event.nonText = buffered.nonText;
-  event.textLength = buffered.textLength;
-  if (buffered.textLength != 0) {
-    memcpy(event.text, readAheadText + buffered.textOffset, buffered.textLength);
-    event.text[buffered.textLength] = '\0';
+bool RsvpSession::bufferThrough(uint8_t index) {
+  if (index >= EVENT_CAPACITY) return false;
+  while (eventCount <= index) {
+    auto& event = events[eventCount++];
+    event = {};
+    if (!source.next(event)) event.kind = EventKind::Error;
+    if (event.textLength > MAX_TOKEN_BYTES) {
+      event.kind = EventKind::OversizedWord;
+      event.textLength = 0;
+    }
+    event.text[event.textLength] = '\0';
   }
   return true;
 }
 
-bool RsvpSession::popReadAhead(DocumentEvent& event) {
-  if (!peekReadAhead(0, event)) return false;
-  const auto first = readAhead[0];
-  if (first.textLength != 0) {
-    const uint16_t removed = static_cast<uint16_t>(first.textLength + 1);
-    const uint16_t tailOffset = static_cast<uint16_t>(first.textOffset + removed);
-    memmove(readAheadText + first.textOffset, readAheadText + tailOffset, readAheadTextUsed - tailOffset);
-    readAheadTextUsed = static_cast<uint16_t>(readAheadTextUsed - removed);
-    for (uint8_t index = 1; index < readAheadCount; ++index) {
-      if (readAhead[index].textOffset >= tailOffset) {
-        readAhead[index].textOffset = static_cast<uint16_t>(readAhead[index].textOffset - removed);
-      }
-    }
-  }
-  for (uint8_t index = 1; index < readAheadCount; ++index) readAhead[index - 1] = readAhead[index];
-  --readAheadCount;
-  return true;
+void RsvpSession::discardEvents(uint8_t index, uint8_t count) {
+  if (count == 0 || index + count > eventCount) return;
+  for (uint8_t next = index + count; next < eventCount; ++next) events[next - count] = events[next];
+  eventCount = static_cast<uint8_t>(eventCount - count);
 }
 
-bool RsvpSession::readAheadShouldStop(const bool includeVisualContext) const {
-  bool logicalTargetFound = false;
-  bool contextBoundary = preparedWord.valid && wordEndsSentence(preparedWord.text, preparedWord.textLength);
-  uint8_t visualTokens = 0;
-  for (uint8_t index = 0; index < readAheadCount; ++index) {
-    const auto& event = readAhead[index];
-    const char* text = event.textLength == 0 ? nullptr : readAheadText + event.textOffset;
-    switch (event.kind) {
-      case EventKind::Word: {
-        logicalTargetFound = true;
-        if (includeVisualContext && !contextBoundary) {
-          ++visualTokens;
-          if (wordEndsSentence(text, event.textLength)) contextBoundary = true;
-        }
-        break;
-      }
-      case EventKind::NonLexicalText:
-        if (endsSentence(text, event.textLength)) {
-          contextBoundary = true;
-        } else if (includeVisualContext && !contextBoundary) {
-          ++visualTokens;
-        }
-        break;
-      case EventKind::ParagraphBoundary:
-      case EventKind::ChapterBoundary:
-        contextBoundary = true;
-        break;
-      case EventKind::NonText:
-      case EventKind::OversizedWord:
-      case EventKind::EndOfBook:
-      case EventKind::Error:
-        return true;
-    }
-    if (logicalTargetFound &&
-        (!includeVisualContext || !contextLineEnabled || contextBoundary || visualTokens >= CONTEXT_SIDE_CAPACITY)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-void RsvpSession::ensureReadAhead(const bool includeVisualContext) {
-  while (!readAheadShouldStop(includeVisualContext)) {
-    if (!bufferNextEvent()) break;
-  }
-}
-
-bool RsvpSession::takeNextWord(DocumentEvent& event, Decision& decision) {
-  while (true) {
-    ensureReadAhead(false);
-    if (!peekReadAhead(0, event)) {
-      setError(decision, Error::SourceRead);
-      return false;
-    }
-    switch (event.kind) {
+bool RsvpSession::findNextWord(Decision& decision) {
+  while (bufferThrough(0)) {
+    switch (events[0].kind) {
       case EventKind::Word:
-        popReadAhead(event);
         return true;
       case EventKind::NonLexicalText:
       case EventKind::ParagraphBoundary:
       case EventKind::ChapterBoundary:
-        popReadAhead(event);
-        continue;
-      case EventKind::NonText:
-      case EventKind::OversizedWord:
-        state = State::Boundary;
-        fallbackReason =
-            event.kind == EventKind::OversizedWord ? PauseReason::OversizedWord : pauseReasonFor(event.nonText);
-        decision = {};
-        decision.pagedModeAvailable = true;
-        fillDecision(decision);
-        return false;
+        discardEvents(0, 1);
+        break;
       case EventKind::Error:
         setError(decision, Error::SourceRead);
         return false;
@@ -311,143 +214,83 @@ bool RsvpSession::takeNextWord(DocumentEvent& event, Decision& decision) {
         decision = {};
         fillDecision(decision);
         return false;
+      case EventKind::OversizedWord:
+      case EventKind::NonText:
+        state = State::Boundary;
+        fallbackReason =
+            events[0].kind == EventKind::OversizedWord ? PauseReason::OversizedWord : pauseReasonFor(events[0].nonText);
+        decision = {};
+        decision.pagedModeAvailable = true;
+        if (pacing.cleanupEveryFrames != 0 && framesSinceCleanup >= pacing.cleanupEveryFrames) {
+          decision.cleanupRefresh = true;
+          framesSinceCleanup = 0;
+        }
+        fillDecision(decision);
+        return false;
     }
+  }
+  setError(decision, Error::SourceRead);
+  return false;
+}
+
+void RsvpSession::buildGroupView(uint8_t count, uint8_t activeIndex) {
+  presentationGroup = {};
+  presentationGroup.count = count;
+  presentationGroup.activeIndex = activeIndex;
+  for (uint8_t index = 0; index < count; ++index) {
+    presentationGroup.tokens[index] = {events[index].text, events[index].textLength, events[index].anchor};
   }
 }
 
 void RsvpSession::configureCurrentGap() {
   paragraphPending = false;
   chapterPending = false;
-  pendingPunctuationPause = 100;
-  if (historyCount != 0 && historyCursor < historyCount) {
-    auto& entry = history[historyCursor];
-    entry.trailingText[0] = '\0';
-    entry.trailingLength = 0;
-    entry.contextBoundaryAfter = wordEndsSentence(preparedWord.text, preparedWord.textLength);
-  }
-
-  for (uint8_t index = 0; index < readAheadCount; ++index) {
-    const auto& event = readAhead[index];
-    const char* text = event.textLength == 0 ? nullptr : readAheadText + event.textOffset;
-    if (event.kind == EventKind::Word) break;
-    if (event.kind == EventKind::NonLexicalText) {
-      const uint16_t pause = punctuationPausePercent(text, event.textLength, pacing);
-      pendingPunctuationPause = std::max(pendingPunctuationPause, pause);
-      const bool sentenceBoundary = endsSentence(text, event.textLength);
-      if (historyCount != 0 && historyCursor < historyCount) {
-        auto& entry = history[historyCursor];
-        if (sentenceBoundary) {
-          entry.contextBoundaryAfter = true;
-        } else if (!entry.contextBoundaryAfter && entry.trailingLength == 0 &&
-                   event.textLength <= CONTEXT_SEPARATOR_CAPACITY) {
-          memcpy(entry.trailingText, text, event.textLength);
-          entry.trailingText[event.textLength] = '\0';
-          entry.trailingLength = event.textLength;
-        }
-      }
-      continue;
-    }
-    if (event.kind == EventKind::ParagraphBoundary) {
+  framePausePercent =
+      punctuationPausePercent(events[consumedCount - 1].text, events[consumedCount - 1].textLength, pacing);
+  // Drain only separators after the group, keeping one unconsumed next event.
+  // Group words never move while their view is published.
+  while (bufferThrough(consumedCount)) {
+    const auto& next = events[consumedCount];
+    if (next.kind == EventKind::NonLexicalText) {
+      framePausePercent = std::max(framePausePercent, punctuationPausePercent(next.text, next.textLength, pacing));
+    } else if (next.kind == EventKind::ParagraphBoundary) {
       paragraphPending = true;
-      if (historyCount != 0 && historyCursor < historyCount) history[historyCursor].contextBoundaryAfter = true;
-      continue;
-    } else if (event.kind == EventKind::ChapterBoundary) {
+      framePausePercent = std::max(framePausePercent, pacing.paragraphPausePercent);
+    } else if (next.kind == EventKind::ChapterBoundary) {
       chapterPending = true;
-      if (historyCount != 0 && historyCursor < historyCount) history[historyCursor].contextBoundaryAfter = true;
-      continue;
-    }
-    if (historyCount != 0 && historyCursor < historyCount) history[historyCursor].contextBoundaryAfter = true;
-    break;
-  }
-}
-
-void RsvpSession::buildContextWindow() {
-  contextWindow = {};
-  if (!contextLineEnabled || !preparedWord.valid || historyCount == 0 || historyCursor >= historyCount) return;
-
-  ContextWindowToken previousNearest[CONTEXT_SIDE_CAPACITY] = {};
-  uint8_t previousCount = 0;
-  for (int index = static_cast<int>(historyCursor) - 1; index >= 0 && previousCount < CONTEXT_SIDE_CAPACITY; --index) {
-    const auto& entry = history[index];
-    if (entry.contextBoundaryAfter) break;
-    if (entry.trailingLength != 0 && previousCount < CONTEXT_SIDE_CAPACITY) {
-      previousNearest[previousCount++] = {entry.trailingText, entry.trailingLength, true};
-    }
-    if (previousCount < CONTEXT_SIDE_CAPACITY) {
-      previousNearest[previousCount++] = {entry.event.text, entry.event.textLength, false};
-    }
-  }
-  while (previousCount != 0) contextWindow.tokens[contextWindow.count++] = previousNearest[--previousCount];
-
-  contextWindow.activeIndex = contextWindow.count;
-  contextWindow.tokens[contextWindow.count++] = {preparedWord.text, preparedWord.textLength, false};
-  if (wordEndsSentence(preparedWord.text, preparedWord.textLength)) return;
-
-  uint8_t followingCount = 0;
-  for (uint8_t index = 0; index < readAheadCount && followingCount < CONTEXT_SIDE_CAPACITY; ++index) {
-    const auto& buffered = readAhead[index];
-    if (buffered.kind == EventKind::ParagraphBoundary || buffered.kind == EventKind::ChapterBoundary ||
-        buffered.kind == EventKind::NonText || buffered.kind == EventKind::OversizedWord ||
-        buffered.kind == EventKind::EndOfBook || buffered.kind == EventKind::Error) {
+    } else {
       break;
     }
-    const char* text = buffered.textLength == 0 ? nullptr : readAheadText + buffered.textOffset;
-    if (buffered.kind == EventKind::NonLexicalText) {
-      if (endsSentence(text, buffered.textLength)) break;
-      contextWindow.tokens[contextWindow.count++] = {text, buffered.textLength, true};
-      ++followingCount;
-      continue;
-    }
-    if (buffered.kind == EventKind::Word) {
-      contextWindow.tokens[contextWindow.count++] = {text, buffered.textLength, false};
-      ++followingCount;
-      if (wordEndsSentence(text, buffered.textLength)) break;
-    }
+    discardEvents(consumedCount, 1);
   }
 }
 
-bool RsvpSession::emitWord(const DocumentEvent& event, const uint32_t nowMs, Decision& decision,
-                           const bool recordHistory) {
-  PreparedWord candidateWord;
-  if (!prepareRsvpWord(event.text, event.textLength, candidateWord)) {
-    state = candidateWord.overflowed ? State::Boundary : State::Error;
-    fallbackReason = candidateWord.overflowed ? PauseReason::OversizedWord : PauseReason::Error;
-    decision = {};
-    decision.error = candidateWord.overflowed ? Error::None : Error::InvalidDocument;
-    decision.pagedModeAvailable = true;
-    fillDecision(decision);
+bool RsvpSession::prepareGroup(uint8_t count, uint8_t activeIndex, uint32_t nowMs, Decision& decision,
+                               bool recordHistory) {
+  if (!prepareRsvpWord(events[activeIndex].text, events[activeIndex].textLength, preparedWord)) {
+    if (!preparedWord.overflowed) {
+      setError(decision, Error::InvalidDocument);
+    } else {
+      state = State::Boundary;
+      fallbackReason = PauseReason::OversizedWord;
+      decision = {};
+      decision.pagedModeAvailable = true;
+      fillDecision(decision);
+    }
     return false;
   }
-  currentEvent = event;
-  preparedWord = candidateWord;
+  consumedCount = count;
+  buildGroupView(count, activeIndex);
   if (recordHistory) {
-    if (historyCursor + 1 < historyCount) historyCount = static_cast<uint8_t>(historyCursor + 1);
     if (historyCount == HISTORY_CAPACITY) {
-      for (uint8_t index = 1; index < HISTORY_CAPACITY; index++) history[index - 1] = history[index];
-      historyCount--;
-      if (historyCursor > 0) historyCursor--;
+      for (uint8_t index = 1; index < HISTORY_CAPACITY; ++index) history[index - 1] = history[index];
+      --historyCount;
     }
-    history[historyCount] = {};
-    history[historyCount++].event = currentEvent;
-    historyCursor = static_cast<uint8_t>(historyCount - 1);
+    history[historyCount++] = {events[0].anchor, count, activeIndex};
+    historyCursor = historyCount - 1;
   }
-
-  switch (preparedWord.pauseClass) {
-    case PauseClass::Clause:
-      framePausePercent = pacing.clausePausePercent;
-      break;
-    case PauseClass::Sentence:
-      framePausePercent = pacing.sentencePausePercent;
-      break;
-    case PauseClass::None:
-      framePausePercent = 100;
-      break;
-  }
-  ensureReadAhead(true);
   configureCurrentGap();
-  framePausePercent = std::max(framePausePercent, pendingPunctuationPause);
-  if (paragraphPending) framePausePercent = std::max(framePausePercent, pacing.paragraphPausePercent);
-  currentPauseMs = baseIntervalMs() * framePausePercent / 100u;
+  currentPauseMs = baseIntervalMs() * (framePausePercent + 35u * (count - 1)) / 100u;
   chapterPauseShown = false;
   state = state == State::Playing ? State::Playing : State::Paused;
   fallbackReason = PauseReason::None;
@@ -459,11 +302,10 @@ bool RsvpSession::emitWord(const DocumentEvent& event, const uint32_t nowMs, Dec
   decision.frame.requestedAtMs = nowMs;
   decision.frame.text = preparedWord.text;
   decision.frame.textLength = preparedWord.textLength;
-  decision.frame.anchor = currentEvent.anchor;
+  decision.frame.anchor = requestedAnchor();
   decision.frame.preparedWord = &preparedWord;
-  buildContextWindow();
-  decision.frame.contextWindow = contextLineEnabled ? &contextWindow : nullptr;
-  framesSinceCleanup++;
+  decision.frame.presentationGroup = &presentationGroup;
+  ++framesSinceCleanup;
   if (paragraphPending && pacing.cleanupEveryFrames != 0 && framesSinceCleanup >= pacing.cleanupEveryFrames) {
     decision.cleanupRefresh = true;
     framesSinceCleanup = 0;
@@ -472,65 +314,84 @@ bool RsvpSession::emitWord(const DocumentEvent& event, const uint32_t nowMs, Dec
   return true;
 }
 
-bool RsvpSession::emitNextWord(const uint32_t nowMs, Decision& decision) {
-  DocumentEvent nextEvent;
-  if (historyCursor + 1 < historyCount) {
-    if (!takeNextWord(nextEvent, decision)) return false;
-    ++historyCursor;
-    return emitWord(nextEvent, nowMs, decision, false);
-  }
-  ensureReadAhead(false);
-  if (!peekReadAhead(0, nextEvent)) {
-    setError(decision, Error::SourceRead);
-    return false;
-  }
-  if (nextEvent.kind == EventKind::Word || nextEvent.kind == EventKind::NonLexicalText ||
-      nextEvent.kind == EventKind::ParagraphBoundary || nextEvent.kind == EventKind::ChapterBoundary) {
-    if (!takeNextWord(nextEvent, decision)) return false;
-    return emitWord(nextEvent, nowMs, decision, true);
-  }
-  if (nextEvent.kind == EventKind::NonText || nextEvent.kind == EventKind::OversizedWord) {
-    state = State::Boundary;
-    fallbackReason =
-        nextEvent.kind == EventKind::OversizedWord ? PauseReason::OversizedWord : pauseReasonFor(nextEvent.nonText);
-    decision = {};
-    decision.pagedModeAvailable = true;
-    if (pacing.cleanupEveryFrames != 0 && framesSinceCleanup >= pacing.cleanupEveryFrames) {
-      decision.cleanupRefresh = true;
-      framesSinceCleanup = 0;
+bool RsvpSession::emitNextWord(uint32_t nowMs, Decision& decision) {
+  discardEvents(0, consumedCount);
+  consumedCount = 0;
+  presentationGroup = {};
+  if (!findNextWord(decision)) return false;
+  if (historyCount != 0 && historyCursor + 1 < historyCount) {
+    const auto& entry = history[++historyCursor];
+    for (uint8_t index = 0; index < entry.count; ++index) {
+      if (!bufferThrough(index) || events[index].kind != EventKind::Word) {
+        setError(decision, Error::SourceRead);
+        return false;
+      }
     }
-    fillDecision(decision);
-    return false;
+    return prepareGroup(entry.count, entry.activeIndex, nowMs, decision, false);
   }
-  if (nextEvent.kind == EventKind::Error) {
-    setError(decision, Error::SourceRead);
-    return false;
+  if (!groupingEnabled) return prepareGroup(1, 0, nowMs, decision, true);
+
+  uint8_t activeIndex = 0;
+  auto role = classifyRsvpCompanion(events[0].text, events[0].textLength);
+  if (role == CompanionRole::Backward) return prepareGroup(1, 0, nowMs, decision, true);
+  // A forward chain needs a lexical anchor inside the three-word budget.
+  while (role == CompanionRole::Forward || role == CompanionRole::Bidirectional) {
+    if (activeIndex == 2 || boundaryAfter(events[activeIndex]) || !bufferThrough(activeIndex + 1) ||
+        events[activeIndex + 1].kind != EventKind::Word || boundaryBefore(events[activeIndex + 1])) {
+      return prepareGroup(1, 0, nowMs, decision, true);
+    }
+    ++activeIndex;
+    role = classifyRsvpCompanion(events[activeIndex].text, events[activeIndex].textLength);
+    if (role == CompanionRole::Backward) return prepareGroup(1, 0, nowMs, decision, true);
   }
-  if (nextEvent.kind == EventKind::EndOfBook) {
-    state = State::Finished;
-    nextDeadlineMs = 0;
-    decision = {};
-    fillDecision(decision);
-    return false;
+
+  uint8_t count = activeIndex + 1;
+  while (count < EVENT_CAPACITY && !boundaryAfter(events[count - 1]) && bufferThrough(count) &&
+         events[count].kind == EventKind::Word && !boundaryBefore(events[count])) {
+    role = classifyRsvpCompanion(events[count].text, events[count].textLength);
+    if (role != CompanionRole::Backward && role != CompanionRole::Bidirectional) break;
+    if (count == 3) {
+      // A postfix outranks the farthest prefix. Emit that prefix first.
+      if (activeIndex != 0) return prepareGroup(1, 0, nowMs, decision, true);
+      break;
+    }
+    ++count;
   }
-  return false;
+  if (!prepareRsvpWord(events[activeIndex].text, events[activeIndex].textLength, preparedWord)) {
+    return prepareGroup(1, 0, nowMs, decision, true);
+  }
+  buildGroupView(count, activeIndex);
+  if (fitCallback && count > 1) {
+    const auto range = fitCallback(fitContext, preparedWord, presentationGroup);
+    if (range.begin > activeIndex || range.end <= activeIndex || range.end > count) {
+      setError(decision, Error::InvalidDocument);
+      return false;
+    }
+    if (range.begin != 0) return prepareGroup(1, 0, nowMs, decision, true);
+    count = range.end;
+  }
+  return prepareGroup(count, activeIndex, nowMs, decision, true);
 }
 
-bool RsvpSession::emitHistoryWord(const uint8_t historyIndex, const uint32_t nowMs, Decision& decision) {
-  if (historyIndex >= historyCount) return false;
-  const ResumeAnchor anchor = history[historyIndex].event.anchor;
-  if (!source.open(&anchor)) {
+bool RsvpSession::emitHistoryWord(uint8_t index, uint32_t nowMs, Decision& decision) {
+  if (index >= historyCount) return false;
+  const auto& entry = history[index];
+  if (!source.open(&entry.firstAnchor)) {
     setError(decision, Error::SourceOpen);
     return false;
   }
-  clearReadAhead();
-  DocumentEvent consumed;
-  if (!takeNextWord(consumed, decision) || consumed.kind != EventKind::Word) {
-    setError(decision, Error::SourceRead);
-    return false;
+  eventCount = 0;
+  consumedCount = 0;
+  presentationGroup = {};
+  if (!findNextWord(decision)) return false;
+  for (uint8_t word = 0; word < entry.count; ++word) {
+    if (!bufferThrough(word) || events[word].kind != EventKind::Word) {
+      setError(decision, Error::SourceRead);
+      return false;
+    }
   }
-  historyCursor = historyIndex;
-  return emitWord(consumed, nowMs, decision, false);
+  historyCursor = index;
+  return prepareGroup(entry.count, entry.activeIndex, nowMs, decision, false);
 }
 
 Decision RsvpSession::step(const Input& input) {
@@ -558,6 +419,22 @@ Decision RsvpSession::step(const Input& input) {
       setError(decision, Error::SourceOpen);
       return decision;
     }
+    if (restoreIdentityPending) {
+      if (!findNextWord(decision) || !prepareRsvpWord(events[0].text, events[0].textLength, boundaryScratch) ||
+          tokenHash(boundaryScratch.text, boundaryScratch.textLength) != restoreTokenHash ||
+          boundaryScratch.textLength != restoreTokenLength) {
+        setError(decision, Error::InvalidDocument);
+        return decision;
+      }
+      restoreIdentityPending = false;
+      restoreIdentityValidated = true;
+      if (groupingEnabled) {
+        presentedAnchor = events[0].anchor;
+        presentedTokenHash32 = restoreTokenHash;
+        presentedTokenLength = restoreTokenLength;
+        discardEvents(0, 1);
+      }
+    }
     emitNextWord(input.nowMs, decision);
     return decision;
   }
@@ -577,9 +454,9 @@ Decision RsvpSession::step(const Input& input) {
     decision.presentedAtMs = input.nowMs;
     decision.refreshDurationMs = input.refreshDurationMs;
     if (framePresented) {
-      presentedAnchor = currentEvent.anchor;
-      presentedTokenHash32 = tokenHash(preparedWord);
-      presentedTokenLength = preparedWord.textLength;
+      presentedAnchor = requestedAnchor();
+      presentedTokenHash32 = requestedTokenHash();
+      presentedTokenLength = requestedTokenLength();
       framePresented = false;
       const uint32_t remainingInterval =
           input.refreshDurationMs < currentPauseMs ? currentPauseMs - input.refreshDurationMs : 0;
@@ -634,8 +511,7 @@ Decision RsvpSession::step(const Input& input) {
       break;
     case Action::StepForward: {
       if (state == State::Boundary && isSkippableNonTextBoundary(fallbackReason)) {
-        DocumentEvent skipped;
-        popReadAhead(skipped);
+        discardEvents(0, 1);
         fallbackReason = PauseReason::None;
         framePresented = false;
         nextDeadlineMs = 0;

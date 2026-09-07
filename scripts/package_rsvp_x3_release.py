@@ -13,9 +13,9 @@ def package_firmware(source, target, env) -> None:
     del source, target
     project_dir = Path(env.subst("$PROJECT_DIR"))
     firmware = Path(env.subst("$BUILD_DIR")) / f"{env.subst('$PROGNAME')}.bin"
-    output_dir = project_dir / "artifacts" / "rsvp-x3-v0.3.0" / "firmware"
+    output_dir = project_dir / "artifacts" / "rsvp-x3-v0.4.0" / "firmware"
     output_dir.mkdir(parents=True, exist_ok=True)
-    packaged = output_dir / "crossrsvp-x3-v0.3.0-experimental.bin"
+    packaged = output_dir / "crossrsvp-x3-v0.4.0-experimental.bin"
     shutil.copy2(firmware, packaged)
     digest = hashlib.sha256(packaged.read_bytes()).hexdigest()
     (output_dir / "SHA256SUMS").write_text(f"{digest}  {packaged.name}\n", encoding="ascii")

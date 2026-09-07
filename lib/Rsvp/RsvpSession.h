@@ -8,77 +8,71 @@ namespace rsvp {
 class RsvpSession final {
  public:
   explicit RsvpSession(RsvpSource& source, ResumeAnchor initialAnchor = {}, RsvpPacingConfig pacing = {},
-                       bool contextLineEnabled = false);
-
+                       bool groupingEnabled = false, PresentationGroupFitCallback fitCallback = nullptr,
+                       void* fitContext = nullptr);
   Decision step(const Input& input);
   ResumeAnchor currentAnchor() const { return presentedAnchor; }
-  uint32_t currentTokenHash() const;
+  uint32_t currentTokenHash() const { return presentedTokenHash32; }
   uint16_t currentTokenLength() const { return presentedTokenLength; }
-  ResumeAnchor requestedAnchor() const { return currentEvent.anchor; }
+  ResumeAnchor requestedAnchor() const;
   uint32_t requestedTokenHash() const;
-  uint16_t requestedTokenLength() const { return preparedWord.textLength; }
+  uint16_t requestedTokenLength() const;
   uint64_t activeReadingMs() const { return accumulatedActiveMs; }
+  void restoreAfterCheckpoint(uint32_t tokenHash, uint16_t tokenLength);
+  bool checkpointIdentityValidated() const { return restoreIdentityValidated; }
 
  private:
   static constexpr uint8_t HISTORY_CAPACITY = 6;
-  static constexpr uint8_t CONTEXT_SEPARATOR_CAPACITY = 48;
-  static constexpr uint8_t READ_AHEAD_EVENT_CAPACITY = 8;
-  static constexpr uint16_t READ_AHEAD_TEXT_CAPACITY = 512;
-
+  static constexpr uint8_t EVENT_CAPACITY = 4;
   bool emitNextWord(uint32_t nowMs, Decision& decision);
-  bool bufferNextEvent();
-  void ensureReadAhead(bool includeVisualContext);
-  bool readAheadShouldStop(bool includeVisualContext) const;
-  bool peekReadAhead(uint8_t index, DocumentEvent& event) const;
-  bool popReadAhead(DocumentEvent& event);
-  void clearReadAhead();
   bool emitHistoryWord(uint8_t historyIndex, uint32_t nowMs, Decision& decision);
-  bool emitWord(const DocumentEvent& event, uint32_t nowMs, Decision& decision, bool recordHistory);
-  bool takeNextWord(DocumentEvent& event, Decision& decision);
+  bool prepareGroup(uint8_t count, uint8_t activeIndex, uint32_t nowMs, Decision& decision, bool recordHistory);
+  bool findNextWord(Decision& decision);
+  bool bufferThrough(uint8_t index);
+  void discardEvents(uint8_t index, uint8_t count);
   void configureCurrentGap();
-  void buildContextWindow();
+  void buildGroupView(uint8_t count, uint8_t activeIndex);
+  bool boundaryBefore(const DocumentEvent& event);
+  bool boundaryAfter(const DocumentEvent& event);
   void setError(Decision& decision, Error error);
   void fillDecision(Decision& decision) const;
   uint32_t baseIntervalMs() const;
-  static uint32_t tokenHash(const PreparedWord& word);
-  uint16_t currentPausePercent() const;
   uint16_t effectiveMaximumWpm() const;
+  static uint32_t tokenHash(const char* text, uint16_t length);
   static PauseReason pauseReasonFor(NonTextKind kind);
   static uint16_t punctuationPausePercent(const char* text, uint16_t length, const RsvpPacingConfig& pacing);
 
+  // Six replay descriptors replace the old full word-history entries.
+  // At most 24 bytes each; token text is re-read from the source.
   struct HistoryEntry {
-    DocumentEvent event;
-    char trailingText[CONTEXT_SEPARATOR_CAPACITY + 1] = {};
-    uint16_t trailingLength = 0;
-    bool contextBoundaryAfter = false;
+    ResumeAnchor firstAnchor;
+    uint8_t count = 1;
+    uint8_t activeIndex = 0;
   };
-
-  struct BufferedEvent {
-    EventKind kind = EventKind::EndOfBook;
-    ResumeAnchor anchor;
-    NonTextKind nonText = NonTextKind::None;
-    uint16_t textOffset = 0;
-    uint16_t textLength = 0;
-  };
+  static_assert(sizeof(HistoryEntry) <= 24);
 
   RsvpSource& source;
   ResumeAnchor initialAnchor;
   RsvpPacingConfig pacing;
-  bool contextLineEnabled = false;
-  DocumentEvent currentEvent;
+  bool groupingEnabled = false;
+  PresentationGroupFitCallback fitCallback = nullptr;
+  void* fitContext = nullptr;
+  // Three source words plus one lookahead. The displayed group stays in the
+  // queue prefix until advance; there is no parallel token-history buffer.
+  DocumentEvent events[EVENT_CAPACITY] = {};
+  uint8_t eventCount = 0;
+  uint8_t consumedCount = 0;
   PreparedWord preparedWord;
-  BufferedEvent readAhead[READ_AHEAD_EVENT_CAPACITY] = {};
-  char readAheadText[READ_AHEAD_TEXT_CAPACITY] = {};
-  uint16_t readAheadTextUsed = 0;
-  uint8_t readAheadCount = 0;
-  DocumentEvent deferredEvent;
-  bool deferredEventValid = false;
-  ContextWindow contextWindow;
+  PreparedWord boundaryScratch;
+  PresentationGroup presentationGroup;
+  bool restoreIdentityPending = false;
+  bool restoreIdentityValidated = false;
+  uint32_t restoreTokenHash = 0;
+  uint16_t restoreTokenLength = 0;
   bool paragraphPending = false;
   bool chapterPending = false;
   bool chapterPauseShown = false;
   PauseReason fallbackReason = PauseReason::None;
-  uint16_t pendingPunctuationPause = 100;
   State state = State::Empty;
   uint32_t frameId = 0;
   ResumeAnchor presentedAnchor;

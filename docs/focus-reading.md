@@ -8,8 +8,8 @@ Focus Reading is a reading aid that bolds the first portion of each word, guidin
 
 ## Enabling Focus Reading
 
-1. Open **Settings > Reader**
-2. Toggle **Focus Reading** on
+1. Open **Settings > Reader** and toggle **Focus Reading** on directly, or open
+   **Text Settings > Style** from the reader and toggle the same row there.
 
 Toggling the setting invalidates affected EPUB section caches for the current layout, the same as changing font settings. Sections are rebuilt on demand, then page turns proceed as normal. No changes are made to your EPUB files.
 

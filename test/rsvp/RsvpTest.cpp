@@ -354,7 +354,7 @@ TEST(RsvpFixture, RealEpubChapterFlowsFromSourceToPausedFirstToken) {
   EXPECT_EQ(decision.frame.anchor.visibleTextOffset, 0u);
 }
 
-TEST(RsvpFixture, RealEpubContextReadAheadKeepsRussianOrderWithoutLogicalProgress) {
+TEST(RsvpFixture, GroupingDoesNotAttachArbitraryNeighborsOrCommitBeforePresentation) {
   StoredFixtureEpubProvider provider(RSVP_FIXTURE_EPUB);
   rsvp::EpubVisibleTextSource source(provider);
   rsvp::RsvpSession session(source, {}, {}, true);
@@ -362,13 +362,10 @@ TEST(RsvpFixture, RealEpubContextReadAheadKeepsRussianOrderWithoutLogicalProgres
   const auto decision = session.step({});
 
   ASSERT_TRUE(decision.render);
-  ASSERT_NE(decision.frame.contextWindow, nullptr);
-  ASSERT_EQ(decision.frame.contextWindow->activeIndex, 0u);
-  ASSERT_EQ(decision.frame.contextWindow->count, 4u);
-  EXPECT_STREQ(decision.frame.contextWindow->tokens[0].text, "Первое");
-  EXPECT_STREQ(decision.frame.contextWindow->tokens[1].text, "русское");
-  EXPECT_STREQ(decision.frame.contextWindow->tokens[2].text, "слово");
-  EXPECT_STREQ(decision.frame.contextWindow->tokens[3].text, "«ёлка»,");
+  ASSERT_NE(decision.frame.presentationGroup, nullptr);
+  ASSERT_EQ(decision.frame.presentationGroup->activeIndex, 0u);
+  ASSERT_EQ(decision.frame.presentationGroup->count, 1u);
+  EXPECT_STREQ(decision.frame.presentationGroup->tokens[0].text, "Первое");
   EXPECT_FALSE(session.currentAnchor().valid);
 }
 
