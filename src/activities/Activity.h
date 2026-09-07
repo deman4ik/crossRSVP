@@ -30,6 +30,8 @@ class Activity {
   virtual ~Activity() = default;
   virtual void onEnter();
   virtual void onExit();
+  // Called before ActivityManager opens a system-owned modal over this activity.
+  virtual void onSystemModalOpening() {}
   virtual void loop() {}
 
   virtual void render(RenderLock&&) {}

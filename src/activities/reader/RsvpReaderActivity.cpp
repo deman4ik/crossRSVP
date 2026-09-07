@@ -22,6 +22,7 @@
 #include "RsvpCheckpointFile.h"
 #include "SdCardFontSystem.h"
 #include "activities/ActivityManager.h"
+#include "activities/settings/SettingsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -130,6 +131,46 @@ bool RsvpReaderActivity::loadBook() {
   pacing.clausePausePercent = static_cast<uint16_t>(SETTINGS.rsvpClausePauseTenths) * 10;
   pacing.sentencePausePercent = static_cast<uint16_t>(SETTINGS.rsvpSentencePauseTenths) * 10;
   pacing.paragraphPausePercent = static_cast<uint16_t>(SETTINGS.rsvpParagraphPauseTenths) * 10;
+  const bool groupingEnabled = prepareGroupingFonts();
+  session = makeUniqueNoThrow<rsvp::RsvpSession>(*source, initialAnchor, pacing, groupingEnabled,
+                                                 &RsvpReaderActivity::fitPresentationGroup, this);
+  if (!session) {
+    LOG_ERR("RSVP", "Failed to allocate session");
+    return enterFatalFallback(rsvp::Error::SourceOpen);
+  }
+  if (mappedInput.hasTouch()) {
+    controlPanel = makeUniqueNoThrow<RsvpControlPanelUi>(renderer);
+    if (!controlPanel) {
+      LOG_ERR("RSVP", "OOM: touch control panel");
+      return enterFatalFallback(rsvp::Error::SourceOpen);
+    } else {
+      controlPanel->begin();
+      panelVisible = true;
+    }
+  }
+  LOG_INF("RSVP", "short-word-grouping=%s", groupingEnabled ? "on" : "off");
+
+  if (restoredFromCheckpoint) session->restoreAfterCheckpoint(restoredTokenHash32, restoredTokenLength);
+  currentDecision = session->step({.nowMs = millis()});
+  if (restoredFromCheckpoint && !session->checkpointIdentityValidated()) {
+    LOG_INF("RSVP", "Checkpoint token identity no longer resolves; returning to Paged progress");
+    currentDecision = {};
+    switchToPagedPending = true;
+    switchToNativeProgress = true;
+    invalidateCheckpointOnNativeFallback = true;
+    return true;
+  }
+  if (!currentDecision.render && currentDecision.pauseReason == rsvp::PauseReason::None &&
+      currentDecision.state != rsvp::State::Finished) {
+    LOG_ERR("RSVP", "No readable first token (state=%d error=%d)", static_cast<int>(currentDecision.state),
+            static_cast<int>(currentDecision.error));
+    return enterFatalFallback(currentDecision.error == rsvp::Error::None ? rsvp::Error::InvalidDocument
+                                                                         : currentDecision.error);
+  }
+  return true;
+}
+
+bool RsvpReaderActivity::prepareGroupingFonts() {
   bool groupingEnabled = SETTINGS.rsvpShortWordGroupingEnabled != 0;
   bool contextUsesSdFont = false;
   if (groupingEnabled) {
@@ -144,7 +185,7 @@ bool RsvpReaderActivity::loadBook() {
   if (groupingEnabled && contextUsesSdFont) {
     // Keep the SD advance collector and bounded tables alive for the activity
     // so group measurements do not allocate advance buffers.
-    sdFontAdvanceScratch = makeUniqueNoThrow<SdCardFont::AdvanceBuildScratch>();
+    if (!sdFontAdvanceScratch) sdFontAdvanceScratch = makeUniqueNoThrow<SdCardFont::AdvanceBuildScratch>();
     if (!sdFontAdvanceScratch) {
       LOG_ERR("RSVP", "OOM: SD font grouping scratch");
       groupingEnabled = false;
@@ -169,32 +210,22 @@ bool RsvpReaderActivity::loadBook() {
       groupingEnabled = false;
     }
   }
-  session = makeUniqueNoThrow<rsvp::RsvpSession>(*source, initialAnchor, pacing, groupingEnabled,
-                                                 &RsvpReaderActivity::fitPresentationGroup, this);
-  if (!session) {
-    LOG_ERR("RSVP", "Failed to allocate session");
-    return enterFatalFallback(rsvp::Error::SourceOpen);
-  }
-  LOG_INF("RSVP", "short-word-grouping=%s", groupingEnabled ? "on" : "off");
+  return groupingEnabled;
+}
 
-  if (restoredFromCheckpoint) session->restoreAfterCheckpoint(restoredTokenHash32, restoredTokenLength);
-  currentDecision = session->step({.nowMs = millis()});
-  if (restoredFromCheckpoint && !session->checkpointIdentityValidated()) {
-    LOG_INF("RSVP", "Checkpoint token identity no longer resolves; returning to Paged progress");
-    currentDecision = {};
-    switchToPagedPending = true;
-    switchToNativeProgress = true;
-    invalidateCheckpointOnNativeFallback = true;
-    return true;
-  }
-  if (!currentDecision.render && currentDecision.pauseReason == rsvp::PauseReason::None &&
-      currentDecision.state != rsvp::State::Finished) {
-    LOG_ERR("RSVP", "No readable first token (state=%d error=%d)", static_cast<int>(currentDecision.state),
-            static_cast<int>(currentDecision.error));
-    return enterFatalFallback(currentDecision.error == rsvp::Error::None ? rsvp::Error::InvalidDocument
-                                                                         : currentDecision.error);
-  }
-  return true;
+void RsvpReaderActivity::applySettings() {
+  RenderLock lock;
+  sdFontSystem.ensureLoaded(renderer);
+  applyInitialOrientation();
+  rsvp::RsvpPacingConfig pacing;
+  pacing.paceWpm = SETTINGS.rsvpPaceWpm;
+  pacing.clausePausePercent = static_cast<uint16_t>(SETTINGS.rsvpClausePauseTenths) * 10;
+  pacing.sentencePausePercent = static_cast<uint16_t>(SETTINGS.rsvpSentencePauseTenths) * 10;
+  pacing.paragraphPausePercent = static_cast<uint16_t>(SETTINGS.rsvpParagraphPauseTenths) * 10;
+  if (session) applyDecision(session->configureWhilePaused(pacing, prepareGroupingFonts()));
+  if (controlPanel) controlPanel->begin();
+  currentDecision.render = true;
+  requestUpdate();
 }
 
 void RsvpReaderActivity::loop() {
@@ -211,6 +242,83 @@ void RsvpReaderActivity::loop() {
     if (fatalFallbackPending.load(std::memory_order_acquire)) return;
     finish();
     return;
+  }
+
+#if defined(SIMULATOR)
+  int tappedX = 0;
+  int tappedY = 0;
+  if (mappedInput.wasScreenTapped(tappedX, tappedY)) {
+    LOG_INF("RSVP", "touch_input x=%d y=%d busy=%u", tappedX, tappedY, RenderLock::peek() ? 1u : 0u);
+  }
+#endif
+  const bool swallowedTouchRelease = swallowTouchRelease && mappedInput.wasScreenTouchReleased();
+  if (swallowedTouchRelease) swallowTouchRelease = false;
+  if (controlPanel && panelVisible && !swallowTouchRelease && !swallowedTouchRelease && !pauseTouchPending) {
+    const auto panelEvent = controlPanel->route(mappedInput);
+    if (panelEvent != RsvpControlPanelUi::Event::None) {
+#if defined(SIMULATOR)
+      static constexpr const char* EVENT_NAMES[] = {"none",      "play",    "step",  "rewind5",
+                                                    "pace_down", "pace_up", "paged", "settings"};
+      LOG_INF("RSVP", "touch_panel_action=%s", EVENT_NAMES[static_cast<unsigned>(panelEvent)]);
+#endif
+      rsvp::Action action = rsvp::Action::None;
+      switch (panelEvent) {
+        case RsvpControlPanelUi::Event::Play:
+          pendingActions.discard(rsvp::Action::TogglePlayback);
+          action = rsvp::Action::TogglePlayback;
+          break;
+        case RsvpControlPanelUi::Event::Step:
+          action = rsvp::Action::StepForward;
+          break;
+        case RsvpControlPanelUi::Event::Rewind:
+          action = rsvp::Action::RewindFive;
+          break;
+        case RsvpControlPanelUi::Event::PaceDown:
+          action = rsvp::Action::PaceDown;
+          break;
+        case RsvpControlPanelUi::Event::PaceUp:
+          action = rsvp::Action::PaceUp;
+          break;
+        case RsvpControlPanelUi::Event::Paged:
+          action = rsvp::Action::ModeSwitch;
+          break;
+        case RsvpControlPanelUi::Event::Settings: {
+          SETTINGS.rsvpPaceWpm = currentDecision.paceWpm;
+          auto settings = makeUniqueNoThrow<SettingsActivity>(renderer, mappedInput, true);
+          if (!settings) {
+            LOG_ERR("RSVP", "OOM: settings activity");
+            return;
+          }
+          onSystemModalOpening();
+          startActivityForResult(std::move(settings), [this](const ActivityResult&) { applySettings(); });
+        }
+          return;
+        case RsvpControlPanelUi::Event::None:
+          break;
+      }
+      if (action != rsvp::Action::None && !pendingActions.push(action)) LOG_ERR("RSVP", "Pending action buffer full");
+      return;
+    }
+  }
+  if (controlPanel && currentDecision.state == rsvp::State::Playing) {
+    int touchX = 0;
+    int touchY = 0;
+    int marginTop = 0;
+    int marginRight = 0;
+    int marginBottom = 0;
+    int marginLeft = 0;
+    renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
+    const int systemGestureClearance = marginTop + renderer.getLineHeight(SMALL_FONT_ID) + 24;
+    const bool tapped = mappedInput.wasScreenTapped(touchX, touchY);
+    if (!pauseTouchPending && (tapped || mappedInput.wasScreenTouchDown(touchX, touchY)) &&
+        touchY >= systemGestureClearance) {
+      swallowTouchRelease = !tapped;
+      pauseTouchPending = true;
+#if defined(SIMULATOR)
+      LOG_INF("RSVP", "touch_panel_visible=1 reason=working_area_pause x=%d y=%d", touchX, touchY);
+#endif
+      pendingActions.discard(rsvp::Action::TogglePlayback);
+    }
   }
 
   if (wordDoesNotFitPending.exchange(false)) {
@@ -242,7 +350,9 @@ void RsvpReaderActivity::loop() {
   {
     RenderLock lock(false);
     if (!lock.ownsLock()) return;
-    const rsvp::Action action = pendingActions.pop();
+    const rsvp::Action action = pauseTouchPending && currentDecision.state == rsvp::State::Playing
+                                    ? rsvp::Action::TogglePlayback
+                                    : pendingActions.pop();
     if (action == rsvp::Action::Exit) {
       lock.unlock();
       if (SETTINGS.backShortToFileBrowser)
@@ -378,6 +488,24 @@ void RsvpReaderActivity::applyDecision(const rsvp::Decision& decision) {
     currentDecision.cleanupRefresh = decision.cleanupRefresh;
   }
   if (decision.render || decision.cleanupRefresh || visualStateChanged) requestUpdate();
+  if (controlPanel) panelVisible = currentDecision.state != rsvp::State::Playing;
+  if (currentDecision.state != rsvp::State::Playing) pauseTouchPending = false;
+}
+
+void RsvpReaderActivity::onSystemModalOpening() {
+  RenderLock lock;
+  if (!session) return;
+  // The modal is a pause barrier, including input captured during a refresh.
+  pendingActions.discard(rsvp::Action::TogglePlayback);
+  pauseTouchPending = false;
+  if (currentDecision.state == rsvp::State::Playing) {
+    applyDecision(session->step({.nowMs = millis(), .action = rsvp::Action::TogglePlayback}));
+  }
+  currentDecision.render = true;
+  if (controlPanel) panelVisible = true;
+#if defined(SIMULATOR)
+  LOG_INF("RSVP", "system_modal_pause state=%u", static_cast<unsigned>(currentDecision.state));
+#endif
 }
 
 namespace {
@@ -486,7 +614,8 @@ bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word, const 
   renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
   const int usableBottom = renderer.getScreenHeight() - marginBottom;
   const int lineHeight = renderer.getLineHeight(activeFontId);
-  const int y = marginTop + (usableBottom - marginTop - lineHeight) / 2;
+  const int reservedBottom = controlPanel ? controlPanel->reservedHeight() : 0;
+  const int y = marginTop + (usableBottom - reservedBottom - marginTop - lineHeight) / 2;
   const int companionY = y + (lineHeight - renderer.getLineHeight(companionFontId)) / 2;
   if (group) {
     for (uint8_t index = 0; index < group->count; ++index) {
@@ -551,9 +680,10 @@ void RsvpReaderActivity::renderBook() {
     int marginLeft = 0;
     renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
     const int statusClearance = renderer.getLineHeight(SMALL_FONT_ID) + 36;
-    const Rect messageBounds(marginLeft + 16, marginTop + statusClearance,
-                             renderer.getScreenWidth() - marginLeft - marginRight - 32,
-                             renderer.getScreenHeight() - marginTop - marginBottom - statusClearance * 2);
+    const int reservedBottom = controlPanel ? controlPanel->reservedHeight() : 0;
+    const Rect messageBounds(
+        marginLeft + 16, marginTop + statusClearance, renderer.getScreenWidth() - marginLeft - marginRight - 32,
+        renderer.getScreenHeight() - marginTop - marginBottom - statusClearance * 2 - reservedBottom);
     // Boundary/error screens are infrequent; the wrapped helper may allocate
     // line strings only when a translation exceeds the oriented safe width.
     UITheme::drawCenteredWrappedText(renderer, messageBounds, UI_12_FONT_ID, message, 3, true, EpdFontFamily::BOLD);
@@ -564,6 +694,23 @@ void RsvpReaderActivity::renderBook() {
     wordDoesNotFitPending.store(true);
   }
   drawStatus();
+  if (controlPanel && panelVisible) {
+    const bool canPlay = currentDecision.state == rsvp::State::Paused;
+    const bool canStep = canPlay || (currentDecision.state == rsvp::State::Boundary &&
+                                     isSkippableNonTextPause(currentDecision.pauseReason));
+    controlPanel->render(canPlay, canStep);
+#if defined(SIMULATOR)
+    if (!panelDiagnosticsLogged) {
+      const int width = renderer.getScreenWidth();
+      const int height = renderer.getScreenHeight();
+      const int panelTop = height - controlPanel->reservedHeight();
+      LOG_INF("RSVP", "touch_panel_geometry x=0 y=%d w=%d h=%d", panelTop, width, controlPanel->reservedHeight());
+      panelDiagnosticsLogged = true;
+    }
+#endif
+  } else {
+    panelDiagnosticsLogged = false;
+  }
 
   const bool cleanup = forcedRefreshPending || currentDecision.cleanupRefresh;
   forcedRefreshPending = false;

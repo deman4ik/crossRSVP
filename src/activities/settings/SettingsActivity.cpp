@@ -34,8 +34,15 @@
 
 namespace fui = freeink::ui;
 
-SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-    : UiTabListActivity("Settings", renderer, mappedInput) {}
+SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const bool returnToCaller)
+    : UiTabListActivity("Settings", renderer, mappedInput), returnToCaller(returnToCaller) {}
+
+bool SettingsActivity::handleHomeGesture() {
+  if (!returnToCaller) return false;
+  SETTINGS.saveToFile();
+  finish();
+  return true;
+}
 
 void SettingsActivity::rebuildSettingsLists() {
   displaySettings.clear();
@@ -245,7 +252,10 @@ bool SettingsActivity::handleButtons() {
       requestUpdate();
     } else {
       SETTINGS.saveToFile();
-      onGoHome();
+      if (returnToCaller)
+        finish();
+      else
+        onGoHome();
     }
     return true;
   }

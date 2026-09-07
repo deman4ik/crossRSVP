@@ -18,6 +18,21 @@ class RsvpPendingActions final {
     return true;
   }
 
+  // Remove all queued instances of an action while preserving every other action's order.
+  size_t discard(const Action action) {
+    size_t write = 0;
+    size_t discarded = 0;
+    for (size_t read = 0; read < size; ++read) {
+      if (actions[read] == action) {
+        ++discarded;
+        continue;
+      }
+      actions[write++] = actions[read];
+    }
+    size = write;
+    return discarded;
+  }
+
   Action pop() {
     for (const Action candidate : priority) {
       for (size_t index = 0; index < size; ++index) {
@@ -35,8 +50,8 @@ class RsvpPendingActions final {
 
  private:
   static constexpr std::array<Action, 8> priority = {
-      Action::Exit,       Action::ModeSwitch,    Action::TogglePlayback, Action::WordDoesNotFit,
-      Action::PaceDown,   Action::PaceUp,        Action::RewindFive,      Action::StepForward,
+      Action::Exit,     Action::ModeSwitch, Action::TogglePlayback, Action::WordDoesNotFit,
+      Action::PaceDown, Action::PaceUp,     Action::RewindFive,     Action::StepForward,
   };
 
   static constexpr bool isUserAction(const Action action) {

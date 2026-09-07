@@ -200,10 +200,12 @@ class SettingsActivity final : public UiTabListActivity {
   void toggleCurrentSetting();
   void openSleepTimeoutPicker();
   void rebuildSettingsLists();
+  const bool returnToCaller;
   void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);
 
  public:
-  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
+  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool returnToCaller = false);
+  bool handleHomeGesture() override;
   void onEnter() override;
   void onExit() override;
   void render(RenderLock&&) override;

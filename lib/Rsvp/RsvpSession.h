@@ -11,6 +11,9 @@ class RsvpSession final {
                        bool groupingEnabled = false, PresentationGroupFitCallback fitCallback = nullptr,
                        void* fitContext = nullptr);
   Decision step(const Input& input);
+  // Applies settings without rebuilding the source or replacing the displayed group.
+  // Only a paused session may be reconfigured; the new grouping policy starts with the next group.
+  Decision configureWhilePaused(RsvpPacingConfig newPacing, bool newGroupingEnabled);
   ResumeAnchor currentAnchor() const { return presentedAnchor; }
   uint32_t currentTokenHash() const { return presentedTokenHash32; }
   uint16_t currentTokenLength() const { return presentedTokenLength; }

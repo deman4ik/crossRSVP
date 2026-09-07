@@ -13,6 +13,7 @@
 #include <memory>
 
 #include "ReaderActivity.h"
+#include "RsvpControlPanelUi.h"
 
 class RsvpReaderActivity final : public ReaderActivity {
  public:
@@ -23,9 +24,12 @@ class RsvpReaderActivity final : public ReaderActivity {
 
   void loop() override;
   void onExit() override;
+  void onSystemModalOpening() override;
 
  private:
   bool loadBook() override;
+  bool prepareGroupingFonts();
+  void applySettings();
   std::string getBookTitle() const override { return epub ? epub->getTitle() : ""; }
   std::string getBookAuthor() const override { return epub ? epub->getAuthor() : ""; }
   std::string getBookThumbBmpPath() const override { return epub ? epub->getThumbBmpPath() : ""; }
@@ -72,4 +76,9 @@ class RsvpReaderActivity final : public ReaderActivity {
   int activeFontId = 0;
   int companionFontId = 0;
   int smallerSdFontId = 0;
+  std::unique_ptr<RsvpControlPanelUi> controlPanel;
+  bool panelVisible = false;
+  bool swallowTouchRelease = false;
+  bool pauseTouchPending = false;
+  bool panelDiagnosticsLogged = false;
 };

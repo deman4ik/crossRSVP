@@ -26,6 +26,7 @@ add_executable(RsvpTest
   RsvpCheckpointFileTest.cpp
   RsvpResumeLifecycleTest.cpp
   RsvpSessionPlaybackTest.cpp
+  RsvpSessionTest.cpp
   RsvpModeSwitchTest.cpp
   RsvpGroupLayoutTest.cpp
   RsvpCompanionPolicyTest.cpp

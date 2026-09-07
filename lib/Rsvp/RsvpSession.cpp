@@ -67,6 +67,24 @@ RsvpSession::RsvpSession(RsvpSource& source, const ResumeAnchor initialAnchor, c
       fitContext(fitContext),
       paceWpm(clampPace(pacing.paceWpm, pacing)) {}
 
+Decision RsvpSession::configureWhilePaused(const RsvpPacingConfig newPacing, const bool newGroupingEnabled) {
+  Decision decision;
+  fillDecision(decision);
+  if (state != State::Paused) return decision;
+  pacing = newPacing;
+  paceWpm = clampPace(newPacing.paceWpm, newPacing);
+  groupingEnabled = newGroupingEnabled;
+  decision = {};
+  decision.render = true;
+  decision.frame.id = frameId;
+  decision.frame.text = preparedWord.text;
+  decision.frame.textLength = preparedWord.textLength;
+  decision.frame.anchor = requestedAnchor();
+  decision.frame.preparedWord = &preparedWord;
+  fillDecision(decision);
+  return decision;
+}
+
 void RsvpSession::restoreAfterCheckpoint(uint32_t hash, uint16_t length) {
   restoreIdentityPending = true;
   restoreTokenHash = hash;
