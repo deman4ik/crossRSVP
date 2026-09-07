@@ -15,9 +15,9 @@ next change easier is the win, not lines added.
 - A commit/PR does one thing. A bug fix is not also a rename is not also a
   reformat. If you spot an unrelated improvement mid-change, leave it or capture
   it separately; do not fold it in.
-- When the working tree has bundled two changes, separate them with the
-  copy-affected-files-aside, reset, re-apply one concern, restore the rest
-  pattern, not by committing the tangle.
+- When the working tree has bundled two changes, preserve all existing work
+  and separate the concerns into reviewable commits. Choose partial staging,
+  an isolated worktree, or another suitable method; do not reset by default.
 - Refactor and behavior change do not ride together. A pure refactor must not
   alter behavior; a behavior change should not drag a refactor along. If both
   are needed: two commits, refactor first.
