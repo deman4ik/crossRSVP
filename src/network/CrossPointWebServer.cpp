@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 
 #include "CrossPointSettings.h"
 #include "FontInstaller.h"
@@ -34,6 +35,12 @@ namespace {
 constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
 constexpr uint16_t UDP_PORTS[] = {54982, 48123, 39001, 44044, 59678};
 constexpr uint16_t LOCAL_UDP_PORT = 8134;
+
+bool isRsvpPauseSetting(const char* key) {
+  if (!key) return false;
+  return strcmp(key, "rsvpClausePauseTenths") == 0 || strcmp(key, "rsvpSentencePauseTenths") == 0 ||
+         strcmp(key, "rsvpParagraphPauseTenths") == 0;
+}
 
 // Static pointer for WebSocket callback (WebSocketsServer requires C-style callback)
 CrossPointWebServer* wsInstance = nullptr;
@@ -1211,7 +1218,11 @@ void CrossPointWebServer::handleGetSettings() const {
       case SettingType::VALUE: {
         doc["type"] = "value";
         if (s.valuePtr) {
-          doc["value"] = static_cast<int>(SETTINGS.*(s.valuePtr));
+          const int value = static_cast<int>(SETTINGS.*(s.valuePtr));
+          doc["value"] = value;
+          // RSVP pause fields remain stored as integer tenths for compatibility,
+          // while the web form works in the user-facing multiplier units.
+          if (isRsvpPauseSetting(s.key)) doc["displayScale"] = 10;
         }
         doc["min"] = s.valueRange.min;
         doc["max"] = s.valueRange.max;
@@ -1300,7 +1311,9 @@ void CrossPointWebServer::handlePostSettings() {
         const int val = doc[s.key].as<int>();
         if (val >= s.valueRange.min && val <= s.valueRange.max) {
           if (s.valuePtr) {
-            SETTINGS.*(s.valuePtr) = static_cast<uint8_t>(val);
+            SETTINGS.*(s.valuePtr) = s.valuePtr == &CrossPointSettings::rsvpPaceWpm
+                                         ? rsvp::normalizePaceWpm(val, CrossPointSettings::rsvpDisplayProfile())
+                                         : static_cast<uint8_t>(val);
           }
           applied++;
         }

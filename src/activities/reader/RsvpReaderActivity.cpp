@@ -128,6 +128,7 @@ bool RsvpReaderActivity::loadBook() {
   }
   rsvp::RsvpPacingConfig pacing;
   pacing.paceWpm = SETTINGS.rsvpPaceWpm;
+  pacing.maximumWpm = pacing.safeMaximumWpm = CrossPointSettings::rsvpMaximumPaceWpm();
   pacing.clausePausePercent = static_cast<uint16_t>(SETTINGS.rsvpClausePauseTenths) * 10;
   pacing.sentencePausePercent = static_cast<uint16_t>(SETTINGS.rsvpSentencePauseTenths) * 10;
   pacing.paragraphPausePercent = static_cast<uint16_t>(SETTINGS.rsvpParagraphPauseTenths) * 10;
@@ -219,6 +220,7 @@ void RsvpReaderActivity::applySettings() {
   applyInitialOrientation();
   rsvp::RsvpPacingConfig pacing;
   pacing.paceWpm = SETTINGS.rsvpPaceWpm;
+  pacing.maximumWpm = pacing.safeMaximumWpm = CrossPointSettings::rsvpMaximumPaceWpm();
   pacing.clausePausePercent = static_cast<uint16_t>(SETTINGS.rsvpClausePauseTenths) * 10;
   pacing.sentencePausePercent = static_cast<uint16_t>(SETTINGS.rsvpSentencePauseTenths) * 10;
   pacing.paragraphPausePercent = static_cast<uint16_t>(SETTINGS.rsvpParagraphPauseTenths) * 10;

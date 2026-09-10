@@ -292,7 +292,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
             {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_ORIENTATION_INVERTED, StrId::STR_LANDSCAPE_CCW},
             "orientation", StrId::STR_CAT_READER),
         SettingInfo::Value(StrId::STR_RSVP_PACE, &CrossPointSettings::rsvpPaceWpm,
-                           {CrossPointSettings::RSVP_PACE_MIN_WPM, CrossPointSettings::RSVP_PACE_MAX_WPM,
+                           {CrossPointSettings::RSVP_PACE_MIN_WPM, CrossPointSettings::rsvpMaximumPaceWpm(),
                             CrossPointSettings::RSVP_PACE_STEP_WPM},
                            "rsvpPaceWpm", StrId::STR_CAT_READER),
         SettingInfo::Value(StrId::STR_RSVP_FONT_SIZE, &CrossPointSettings::rsvpFontSize,

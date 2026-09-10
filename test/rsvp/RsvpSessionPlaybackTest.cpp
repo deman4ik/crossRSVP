@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "RsvpPaceLimits.h"
 #include "RsvpSession.h"
 
 namespace {
@@ -128,6 +129,28 @@ TEST(RsvpSessionPlayback, LongRefreshConsumesTheWholePunctuationInterval) {
 
   EXPECT_EQ(playing.nextDeadlineMs, 1300u);
   EXPECT_EQ(frameText(session.step({.nowMs = 1300})), "дальше");
+}
+
+TEST(RsvpSessionPlayback, DisplayPaceLimitsApplyToRestoredValuesAndControls) {
+  for (const auto profile : {rsvp::DisplayProfile::X3, rsvp::DisplayProfile::X4, rsvp::DisplayProfile::X4Pro,
+                             rsvp::DisplayProfile::Uncalibrated}) {
+    VectorSource source({word("one", 0), word("two", 4)});
+    rsvp::RsvpPacingConfig config;
+    config.maximumWpm = config.safeMaximumWpm = rsvp::maximumPaceWpm(profile);
+    config.paceWpm = rsvp::normalizePaceWpm(240, profile);
+    rsvp::RsvpSession session(source, {}, config);
+    ASSERT_EQ(session.step({}).paceWpm, config.maximumWpm);
+    for (int i = 0; i < 30; ++i) {
+      EXPECT_EQ(session.step({.action = rsvp::Action::PaceUp}).paceWpm, config.maximumWpm);
+    }
+    EXPECT_GE(60000u / config.maximumWpm, rsvp::refreshBudgetMs(profile));
+    for (int i = 0; i < 30; ++i) session.step({.action = rsvp::Action::PaceDown});
+    EXPECT_EQ(session.step({}).paceWpm, rsvp::MINIMUM_PACE_WPM);
+    EXPECT_EQ(rsvp::normalizePaceWpm(0, profile), rsvp::MINIMUM_PACE_WPM);
+    EXPECT_EQ(rsvp::normalizePaceWpm(99, profile), 90);
+    EXPECT_EQ(rsvp::normalizePaceWpm(100, profile), 100);
+    EXPECT_EQ(rsvp::normalizePaceWpm(65536, profile), config.maximumWpm);
+  }
 }
 
 TEST(RsvpSessionPlayback, PaceReaches240WhileRefreshRemainsThePhysicalLimit) {

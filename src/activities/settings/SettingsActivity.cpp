@@ -322,7 +322,7 @@ void SettingsActivity::toggleCurrentSetting() {
     }
     setting.valueSetter((cur + 1) % totalValues);
   } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
-    const int8_t currentValue = SETTINGS.*(setting.valuePtr);
+    const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
     if (currentValue + setting.valueRange.step > setting.valueRange.max) {
       SETTINGS.*(setting.valuePtr) = setting.valueRange.min;
     } else {
@@ -471,6 +471,13 @@ std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
       char valueBuffer[32];
       snprintf(valueBuffer, sizeof(valueBuffer), tr(STR_SLEEP_TIMER_VALUE_FORMAT),
                static_cast<unsigned int>(SETTINGS.*(setting.valuePtr)));
+      return valueBuffer;
+    }
+    if (setting.nameId == StrId::STR_RSVP_CLAUSE_PAUSE || setting.nameId == StrId::STR_RSVP_SENTENCE_PAUSE ||
+        setting.nameId == StrId::STR_RSVP_PARAGRAPH_PAUSE) {
+      char valueBuffer[8];
+      const unsigned int tenths = SETTINGS.*(setting.valuePtr);
+      snprintf(valueBuffer, sizeof(valueBuffer), tr(STR_RSVP_PAUSE_MULTIPLIER_FORMAT), tenths / 10, tenths % 10);
       return valueBuffer;
     }
     return std::to_string(SETTINGS.*(setting.valuePtr));

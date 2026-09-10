@@ -2,6 +2,7 @@
 #include <ArduinoJson.h>
 #include <Epub/ReaderRenderSpec.h>
 #include <PersistableStore.h>
+#include <RsvpPaceLimits.h>
 #include <RsvpSettings.h>
 
 #include <cstdint>
@@ -202,10 +203,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // settings.json; append new styles rather than reordering these values.
   enum RSVP_GUIDE_STYLE { RSVP_GUIDES_OFF = 0, RSVP_GUIDES_ON = 1, RSVP_GUIDE_STYLE_COUNT };
 
-  static constexpr uint8_t RSVP_PACE_MIN_WPM = 60;
-  static constexpr uint8_t RSVP_PACE_MAX_WPM = 240;
-  static constexpr uint8_t RSVP_PACE_STEP_WPM = 10;
-  static constexpr uint8_t RSVP_DEFAULT_PACE_WPM = 100;
+  static constexpr uint8_t RSVP_PACE_MIN_WPM = rsvp::MINIMUM_PACE_WPM;
+  static constexpr uint8_t RSVP_PACE_STEP_WPM = rsvp::PACE_STEP_WPM;
+  static constexpr uint8_t RSVP_DEFAULT_PACE_WPM = rsvp::DEFAULT_PACE_WPM;
+  static rsvp::DisplayProfile rsvpDisplayProfile();
+  static uint8_t rsvpMaximumPaceWpm();
   static constexpr uint8_t RSVP_FONT_SIZE_MIN = 12;
   static constexpr uint8_t RSVP_FONT_SIZE_MAX = 18;
   static constexpr uint8_t RSVP_FONT_SIZE_STEP = 2;

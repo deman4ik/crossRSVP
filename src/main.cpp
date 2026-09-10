@@ -297,19 +297,6 @@ void enterDeepSleep(bool fromTimeout = false) {
 }
 
 void setupDisplayAndFonts(bool seamless = false) {
-#if !FREEINK_MCU_C3
-  // C3 resolves its controller in HalGPIO::begin() before SPI claims the
-  // display pins. X4 Pro skips that C3-only path, so probe here before
-  // display.begin() selects and initializes its panel driver.
-  static bool controllerResolved = false;
-  if (!controllerResolved) {
-    controllerResolved = true;
-    if (freeink::applyXteinkDisplayController()) {
-      LOG_DBG("MAIN", "Panel controller: UltraChip UC81xx variant detected");
-    }
-  }
-#endif
-
   display.begin(seamless);
   renderer.begin();
   activityManager.begin();
@@ -394,6 +381,19 @@ void setup() {
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
 #else
   LOG_INF("MAIN", "Device: %s", BoardConfig::ACTIVE.name);
+#endif
+
+#if !FREEINK_MCU_C3
+  // C3 resolves its controller in HalGPIO::begin() before SPI claims the
+  // display pins. X4 Pro skips that C3-only path, so probe here before
+  // settings load selects the panel-dependent RSVP speed range.
+  static bool controllerResolved = false;
+  if (!controllerResolved) {
+    controllerResolved = true;
+    if (freeink::applyXteinkDisplayController()) {
+      LOG_DBG("MAIN", "Panel controller: UltraChip UC81xx variant detected");
+    }
+  }
 #endif
 
   // SD Card Initialization

@@ -77,8 +77,8 @@ TEST(RsvpShortWordGroupingSettings, LabelIsTranslatedInEnglishAndRussian) {
       std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() / "lib" / "I18n" / "translations";
   const std::string english = translation(translations / "english.yaml");
   const std::string russian = translation(translations / "russian.yaml");
-  EXPECT_NE(english.find("STR_RSVP_SHORT_WORD_GROUPING: \"Short-word grouping\""), std::string::npos);
-  EXPECT_NE(russian.find("STR_RSVP_SHORT_WORD_GROUPING: \"Группировка коротких слов\""), std::string::npos);
+  EXPECT_NE(english.find("STR_RSVP_SHORT_WORD_GROUPING: \"Group short function words\""), std::string::npos);
+  EXPECT_NE(russian.find("STR_RSVP_SHORT_WORD_GROUPING: \"Группировать короткие служебные слова\""), std::string::npos);
 }
 
 }  // namespace

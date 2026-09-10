@@ -36,6 +36,19 @@ uint8_t normalizeSteppedValue(const uint8_t value, const uint8_t minValue, const
 
 }  // namespace
 
+rsvp::DisplayProfile CrossPointSettings::rsvpDisplayProfile() {
+  const auto controller = BoardConfig::ACTIVE.displayController;
+  if (BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3 && controller == BoardConfig::DisplayController::UC8253)
+    return rsvp::DisplayProfile::X3;
+  if (controller == BoardConfig::DisplayController::SSD1677) {
+    if (BoardConfig::isX4Pro()) return rsvp::DisplayProfile::X4Pro;
+    if (BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX4) return rsvp::DisplayProfile::X4;
+  }
+  return rsvp::DisplayProfile::Uncalibrated;
+}
+
+uint8_t CrossPointSettings::rsvpMaximumPaceWpm() { return rsvp::maximumPaceWpm(rsvpDisplayProfile()); }
+
 void CrossPointSettings::validateFrontButtonMapping(CrossPointSettings& settings) {
   const uint8_t mapping[] = {settings.frontButtonBack, settings.frontButtonConfirm, settings.frontButtonLeft,
                              settings.frontButtonRight};
@@ -129,6 +142,7 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   for (const auto& info : getSettingsList()) {
     if (!info.key) continue;
     if (strcmp(info.key, rsvp::SHORT_WORD_GROUPING_SETTING_KEY) == 0) continue;
+    if (info.valuePtr == &CrossPointSettings::rsvpPaceWpm) continue;
     // Dynamic entries (KOReader etc.) are stored in their own files — skip.
     if (!info.valuePtr && !info.stringOffset) continue;
 
@@ -192,10 +206,10 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   // and older settings files can still provide an arbitrary in-range number.
   // Normalize RSVP values so persisted state always describes a selectable
   // option and request one repair write when an old value needed correction.
-  const uint8_t loadedPace = rsvpPaceWpm;
-  rsvpPaceWpm = normalizeSteppedValue(rsvpPaceWpm, RSVP_PACE_MIN_WPM, RSVP_PACE_MAX_WPM, RSVP_PACE_STEP_WPM,
-                                      RSVP_DEFAULT_PACE_WPM);
-  if (!doc["rsvpPaceWpm"].isNull() && loadedPace != rsvpPaceWpm) needsResave = true;
+  const auto storedPace = doc["rsvpPaceWpm"];
+  const uint32_t loadedPace = storedPace.is<uint32_t>() ? storedPace.as<uint32_t>() : RSVP_DEFAULT_PACE_WPM;
+  rsvpPaceWpm = rsvp::normalizePaceWpm(loadedPace, rsvpDisplayProfile());
+  if (!storedPace.isNull() && (!storedPace.is<uint32_t>() || loadedPace != rsvpPaceWpm)) needsResave = true;
 
   const uint8_t loadedRsvpFontSize = rsvpFontSize;
   rsvpFontSize = normalizeSteppedValue(rsvpFontSize, RSVP_FONT_SIZE_MIN, RSVP_FONT_SIZE_MAX, RSVP_FONT_SIZE_STEP,

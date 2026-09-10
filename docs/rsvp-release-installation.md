@@ -1,7 +1,7 @@
-# CrossRSVP v0.5.0 — X3, X4 и X4 Pro: installation and rollback
+# CrossRSVP v0.6.0 — X3, X4 и X4 Pro: installation and rollback
 
-This guide applies to the model-labelled images in the CrossRSVP v0.5.0 release.
-Physical qualification is pending; publication requires a separate confirmation. Use
+This guide applies to the model-labelled images in the CrossRSVP v0.6.0 release.
+Physical qualification is pending; this is a pre-release. Use
 only the image whose model name matches the label on the reader. X3 and the
 original X4 are separate package names even though they share the ESP32-C3
 build and runtime detection. X4 Pro requires the ESP32-S3 image.
@@ -14,7 +14,7 @@ switching to it. Do not remove power during that operation.
 
 1. Confirm the exact model and compare the downloaded image's SHA-256 with the
    `SHA256SUMS` entry from the release.
-2. Copy the matching `crossrsvp-<model>-v0.5.0.bin` image from the release bundle
+2. Copy the matching `crossrsvp-<model>-v0.6.0.bin` image from the release bundle
    to the SD card.
    Do not select a neighbouring model's image.
 3. On the reader open **Settings → System → SD Card Firmware Update**, select

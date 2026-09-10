@@ -356,8 +356,13 @@
     }
 
     if (setting.type === 'value') {
-      return '<input type="number" id="' + id + '" value="' + setting.value + '"' +
-        ' min="' + setting.min + '" max="' + setting.max + '" step="' + setting.step + '"' +
+      const scale = setting.displayScale || 1;
+      const value = setting.value / scale;
+      const min = setting.min / scale;
+      const max = setting.max / scale;
+      const step = setting.step / scale;
+      return '<input type="number" id="' + id + '" value="' + value + '"' +
+        ' min="' + min + '" max="' + max + '" step="' + step + '"' +
         ' onchange="handleSettingChanged(\'' + setting.key + '\')">';
     }
 
@@ -382,7 +387,7 @@
       return parseInt(el.value, 10);
     }
     if (setting.type === 'value') {
-      return parseInt(el.value, 10);
+      return Math.round(parseFloat(el.value) * (setting.displayScale || 1));
     }
     if (setting.type === 'string') {
       return el.value;
@@ -411,6 +416,9 @@
       return el.checked ? 1 : 0;
     }
     if (setting.type === 'enum' || setting.type === 'value') {
+      if (setting.type === 'value') {
+        return Math.round(parseFloat(el.value) * (setting.displayScale || 1));
+      }
       return parseInt(el.value, 10);
     }
     return el.value;
@@ -428,7 +436,7 @@
       return true;
     }
 
-    const nextValue = String(value);
+    const nextValue = setting.type === 'value' ? String(value / (setting.displayScale || 1)) : String(value);
     if (el.value === nextValue) return false;
     el.value = nextValue;
     return true;

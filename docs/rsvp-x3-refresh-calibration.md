@@ -28,10 +28,20 @@ The tracer also logs free heap with every sample. A declining heap trend invalid
 
 ## Playback budget gate
 
-The default and qualification baseline remain 100 WPM, which gives a 600 ms base interval. The experimental control
-range extends to 240 requested WPM (250 ms base interval) so a faster X3 panel can be exercised. Blocking refresh time
-is charged to every frame: when it exceeds the requested interval, the next word appears as soon as the panel is ready,
-without skipping tokens. A requested value above 100 must not be described as an achieved physical rate until measured.
+The provisional nominal ceiling for the original X3 UC8253 is 130 WPM, based on
+the approximately 435–436 ms warm FAST measurement documented in the driver. The
+current provisional ceilings are 120 WPM for X4 and X4 Pro units using the
+SSD1677 path (approximately 500 ms FAST), and 100 WPM for X3 UC8279d, X4/X4 Pro
+UC8179 or UC8279, and unknown variants whose FAST timing has not been measured.
+The 100-WPM fallback corresponds to a 600 ms base interval and is not a hardware
+measurement. See [RSVP display limits](rsvp-display-limits.md) for sources and
+the distinction between nominal limits and qualification.
+
+Blocking refresh time is charged to every frame: when it exceeds the requested
+interval, the next word appears as soon as the panel is ready, without skipping
+tokens. The 0x1C fast-DU shortcuts remain disabled for these limits because
+they are opt-in and their long-session, temperature-dependent behavior is not
+the default validated path.
 
 The candidate must not be described as physically qualified until the X3 run shows:
 
@@ -40,6 +50,8 @@ The candidate must not be described as physically qualified until the X3 run sho
 - cleanup refreshes excluded from the playing deadline and scheduled only at an explicit pause or structural boundary.
 
 The existing X3 HAL documents the cleanup path at approximately 1720 ms, so cleanup cannot meet an ordinary playing
-interval. Compute the qualified safe pace as `floor(60000 / (p95 + 100))` WPM and round down to the nearest 10 WPM;
-the extra 100 ms retains the existing scheduling margin. Keep 100 WPM as the qualification baseline unless the
-physical run proves a higher rate; the 240-WPM control ceiling is an experimental request, not a hardware claim.
+interval. For hardware qualification, compute the safe pace as
+`floor(60000 / (p95 + 100))` WPM and round down to the nearest 10 WPM; the extra
+100 ms retains the scheduling margin. The nominal ceilings above remain
+provisional until this measurement is collected for the exact board, controller,
+temperature range, and orientation.

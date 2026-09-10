@@ -28,6 +28,12 @@ DEVICE_PROFILES = {
     "x4": ("Hardware detect: X4", (480, 800)),
     "x4pro": ("Device: xteink_x4_pro", (480, 800)),
 }
+# Keep these qualification expectations beside the simulator profiles. The
+# firmware cap is being tuned per board; the scenario starts at the persisted
+# minimum and reaches the cap using the UI's 10 WPM step.
+RSVP_EXPECTED_MAX_WPM = {"x3": 130, "x4": 120, "x4pro": 120}
+RSVP_PACE_MIN_WPM = 60
+RSVP_PACE_STEP_WPM = 10
 
 
 @dataclass(frozen=True)
@@ -49,6 +55,8 @@ class Scenario:
     screenshots_after_wake: dict[int, str] | None = None
     expected_touch_actions: tuple[str, ...] = ()
     expected_controls: tuple[tuple[int, int], ...] = ()
+    expected_settings: tuple[tuple[str, int], ...] = ()
+    requires_rsvp: bool = True
 
 
 def parse_args() -> argparse.Namespace:
@@ -215,7 +223,7 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
         marker, _ = DEVICE_PROFILES[device]
         if not any(line.endswith(marker) for line in completed.stdout.splitlines()):
             raise RuntimeError(f"{scenario.name}: {device} profile was not detected")
-        if scenario.name != "focus-settings" and activity_entry_count(completed.stdout, "RsvpReader") == 0:
+        if scenario.requires_rsvp and activity_entry_count(completed.stdout, "RsvpReader") == 0:
             raise RuntimeError(f"{scenario.name}: RSVP activity was not entered")
         if scenario.short_word_grouping and "short-word-grouping=on" not in completed.stdout:
             raise RuntimeError(f"{scenario.name}: Short-word grouping setting was not applied")
@@ -275,6 +283,11 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
                 raise RuntimeError(f"{scenario.name}: RSVP activity was not entered exactly once")
             if activity_entry_count(completed.stdout, "EpubReader") < 2:
                 raise RuntimeError(f"{scenario.name}: Back during refresh did not switch to Paged Mode")
+        if scenario.name == "settings-pace-migrate-240":
+            controls = tuple((int(action), int(state)) for action, state in
+                             re.findall(r"control action=(\d+) state=(\d+)", completed.stdout))
+            if (5, 1) not in controls:
+                raise RuntimeError(f"{scenario.name}: RSVP PaceUp control was not observed: {controls}")
         if scenario.name == "grouping-playback":
             frame_lines = [
                 line for line in completed.stdout.splitlines() if "[RSVP] refresh=fast" in line
@@ -298,14 +311,19 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
                 if found < 0:
                     raise RuntimeError(f"{scenario.name}: missing ordered frame {expected!r}")
                 cursor = found + len(expected)
+        persisted = json.loads((run_root / "fs_" / ".crosspoint" / "settings.json").read_text(encoding="utf-8"))
         if scenario.name == "focus-settings":
             if activity_entry_count(completed.stdout, "Settings") < 1:
                 raise RuntimeError(f"{scenario.name}: flat Settings activity was not entered")
             if activity_entry_count(completed.stdout, "TextSettings") < 1:
                 raise RuntimeError(f"{scenario.name}: nested Text Settings activity was not entered")
-            persisted = json.loads((run_root / "fs_" / ".crosspoint" / "settings.json").read_text(encoding="utf-8"))
             if persisted.get("focusReadingEnabled") != 0:
                 raise RuntimeError(f"{scenario.name}: nested Focus Reading toggle did not persist")
+        for key, expected in scenario.expected_settings:
+            if persisted.get(key) != expected:
+                raise RuntimeError(
+                    f"{scenario.name}: persisted {key}={persisted.get(key)!r}, expected {expected}"
+                )
         if scenario.name.startswith("orientation-"):
             if "group count=3 active=1 words=не|сделал|бы" not in completed.stdout:
                 raise RuntimeError(f"{scenario.name}: three-word frame was not presented")
@@ -474,8 +492,10 @@ def validate_short_word_grouping_screenshots(output: Path) -> None:
         raise RuntimeError("short-word-grouping: enabled grouping did not change the rendered frame")
 
 
-def scenarios() -> list[Scenario]:
+def scenarios(device: str) -> list[Scenario]:
     enter_rsvp = "1200:ENTER;2200:DOWN;2600:DOWN;3000:DOWN;3400:ENTER"
+    expected_max = RSVP_EXPECTED_MAX_WPM[device]
+    pace_steps = (expected_max - RSVP_PACE_MIN_WPM) // RSVP_PACE_STEP_WPM
     return [
         Scenario(
             name="flow-portrait",
@@ -548,6 +568,54 @@ def scenarios() -> list[Scenario]:
                 12600: "focus-reader-return.bmp",
             },
             start_home=True,
+            requires_rsvp=False,
+        ),
+        Scenario(
+            name="settings-pace-max-buttons",
+            orientation=0,
+            # Home -> Settings, switch to Reader, select the fifth visible
+            # row (RSVP Pace), then advance from the minimum to this board's
+            # configured maximum. QUIT leaves the saved JSON available for
+            # the assertion below.
+            input_script=(
+                "1200:DOWN;1600:DOWN;2000:DOWN;2400:ENTER;"
+                "4200:ENTER;4600:DOWN;5000:DOWN;5400:DOWN;5800:DOWN;6200:DOWN;"
+                + ";".join(f"{6600 + index * 400}:ENTER" for index in range(pace_steps))
+                + ";9800:QUIT"
+            ),
+            screenshots={9300: "settings-pace-max-buttons.bmp"},
+            start_home=True,
+            pace_wpm=RSVP_PACE_MIN_WPM,
+            expected_settings=(("rsvpPaceWpm", expected_max),),
+            requires_rsvp=False,
+        ),
+        Scenario(
+            name="settings-pace-wrap-buttons",
+            orientation=0,
+            # A separate one-step probe catches signed 8-bit overflow and
+            # verifies that the UI wraps exactly from max back to minimum.
+            input_script=(
+                "1200:DOWN;1600:DOWN;2000:DOWN;2400:ENTER;"
+                "4200:ENTER;4600:DOWN;5000:DOWN;5400:DOWN;5800:DOWN;6200:DOWN;"
+                "6600:ENTER;8000:QUIT"
+            ),
+            screenshots={7200: "settings-pace-wrap-buttons.bmp"},
+            start_home=True,
+            pace_wpm=expected_max,
+            expected_settings=(("rsvpPaceWpm", RSVP_PACE_MIN_WPM),),
+            requires_rsvp=False,
+        ),
+        Scenario(
+            name="settings-pace-migrate-240",
+            orientation=0,
+            # Loading a legacy/out-of-range value must normalize to the board
+            # cap and write it back to SD. Enter RSVP and press PaceUp once to
+            # prove the runtime also holds at that cap.
+            input_script=f"{enter_rsvp};5000:RIGHT;6200:QUIT",
+            screenshots={5600: "settings-pace-migrate-240.bmp"},
+            start_home=False,
+            pace_wpm=240,
+            expected_settings=(("rsvpPaceWpm", expected_max),),
         ),
         Scenario(
             name="grouping-off",
@@ -624,6 +692,21 @@ def touch_scenarios() -> list[Scenario]:
                  f"{entry};4100:TAP:360,616;6000:HOME;8000:QUIT",
                  {3600: "touch-settings-before.bmp", 5200: "touch-settings-open.bmp",
                   7100: "touch-settings-return.bmp"}, expected_touch_actions=("settings",)),
+        Scenario(
+            "touch-settings-pace-max",
+            0,
+            # Enter RSVP, open its Settings modal, select the Reader tab, then
+            # tap the RSVP Pace row from its minimum to the X4 Pro cap.
+            f"{entry};4100:TAP:360,616;5600:TAP:180,110;"
+            + ";".join(f"{6200 + index * 450}:TAP:240,455" for index in range(
+                (RSVP_EXPECTED_MAX_WPM["x4pro"] - RSVP_PACE_MIN_WPM) // RSVP_PACE_STEP_WPM
+            ))
+            + ";9800:QUIT",
+            {6000: "touch-settings-pace-reader.bmp", 9000: "touch-settings-pace-max.bmp"},
+            pace_wpm=RSVP_PACE_MIN_WPM,
+            expected_settings=(("rsvpPaceWpm", RSVP_EXPECTED_MAX_WPM["x4pro"]),),
+            expected_touch_actions=("settings",),
+        ),
         Scenario("touch-frontlight", 0,
                  f"{entry};4500:TAP:120,546;4800:SWIPE:240,5,240,200,160;"
                  "6500:HOME;8500:QUIT",
@@ -774,7 +857,7 @@ def main() -> int:
             "grouping": grouping_fixture,
             "long-word": long_word_fixture,
         }
-        available = touch_scenarios() if args.device == "x4pro" else scenarios()
+        available = touch_scenarios() if args.device == "x4pro" else scenarios(args.device)
         selected = [scenario for scenario in available if not args.scenario or scenario.name in args.scenario]
         unknown = set(args.scenario or ()) - {scenario.name for scenario in available}
         if unknown:
