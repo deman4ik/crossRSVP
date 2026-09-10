@@ -49,7 +49,7 @@ A word with Companion Eligibility displayed beside the Active Word without its o
 _Avoid_: Context word, secondary active word, skipped word
 
 **Companion Eligibility**:
-The language-specific permission for a word to join an adjacent Active Word in the same Presentation Group, including the direction in which it may join.
+The language-specific permission for a word to join an adjacent Active Word in the same Presentation Group, including attachment direction and length limits determined by the number of Companion Words in that group.
 _Avoid_: Stop word, insignificant word
 
 **Grouping Boundary**:
