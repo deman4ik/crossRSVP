@@ -4,6 +4,10 @@ CrossRSVP adds a focused rapid-reading experience to an e-reader while preservin
 
 ## Language
 
+**CrossRSVP**:
+A fork of CrossPoint Reader that adds RSVP Mode alongside Paged Mode, allowing readers to choose how a book is presented.
+_Avoid_: Standalone speed-reading app, replacement for Paged Mode
+
 **Reading Mode**:
 The currently active, mutually exclusive way in which a book is presented: Paged Mode or RSVP Mode.
 _Avoid_: Reader type, view
