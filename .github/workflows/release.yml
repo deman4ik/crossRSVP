@@ -1,7 +1,9 @@
-name: Compile Release
+name: Validate CrossRSVP Release
 
-# Build and attach firmware only after a release is published. The release tag
-# supplies both the source revision and the version in each asset name.
+# Build and validate the CrossRSVP images after a release is published. The
+# GitHub Release is managed manually: locally verified firmware binaries and
+# SHA256SUMS are attached by the release owner, while this workflow only keeps
+# validation copies as Actions artifacts and can never overwrite that release.
 
 on:
   release:
@@ -17,27 +19,42 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - pio_env: gh_release
-            device: x3-x4
-          - pio_env: sticky-gh_release
-            device: sticky
-          - pio_env: x4pro-gh_release
+          - pio_env: rsvp_x3_release
+            device: x3
+          - pio_env: rsvp_x4_release
+            device: x4
+          - pio_env: rsvp_x4pro_release
             device: x4pro
-          - pio_env: papermono-gh_release
-            device: papermono
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name }}
           submodules: recursive
 
-      - name: Validate release version
+      - name: Validate CrossRSVP release version
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          version="${RELEASE_TAG#v}"
-          configured_version="$(sed -n 's/^version = //p' platformio.ini | head -n1)"
-          test "$version" = "$configured_version"
+          python - <<'PY'
+          import configparser
+          import os
+          import re
+
+          tag = os.environ["RELEASE_TAG"]
+          match = re.fullmatch(r"v(\d+\.\d+\.\d+)", tag)
+          if match is None:
+              raise SystemExit(f"Release tag must be v<major>.<minor>.<patch>, got {tag!r}")
+
+          parser = configparser.ConfigParser(interpolation=None)
+          parser.read("platformio.ini")
+          configured = parser.get("crossrsvp", "version", fallback="").strip()
+          expected = match.group(1)
+          if configured != expected:
+              raise SystemExit(
+                  f"crossrsvp.version ({configured!r}) does not match release tag ({expected!r})"
+              )
+          print(f"Validated CrossRSVP version {configured}")
+          PY
 
       - uses: actions/setup-python@v6
         with:
@@ -60,50 +77,33 @@ jobs:
             "cryptography>=45.0.3" "certifi>=2025.8.3" "ecdsa>=0.19.1" "bitstring>=4.3.1" \
             "reedsolo>=1.5.3,<1.8" "esp-idf-size>=2.0.0" "esp-coredump>=1.14.0"
 
-      - name: Build CrossPoint
+      - name: Build CrossRSVP
         run: pio run -e ${{ matrix.pio_env }} -j1
 
-      - name: Prepare firmware asset
+      - name: Validate packaged firmware
         id: asset
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           version="${RELEASE_TAG#v}"
-          asset="crosspoint-${version}-${{ matrix.device }}.bin"
-          cp ".pio/build/${{ matrix.pio_env }}/firmware.bin" "$asset"
-          echo "name=$asset" >> "$GITHUB_OUTPUT"
+          asset="crossrsvp-${{ matrix.device }}-v${version}.bin"
+          package_dir="artifacts/crossrsvp-${{ matrix.device }}-v${version}/firmware"
+          test -f "$package_dir/$asset"
+          test -f "$package_dir/SHA256SUMS"
+          (cd "$package_dir" && sha256sum -c SHA256SUMS)
 
-      - name: Stage firmware asset
+          artifact_dir="ci-artifact"
+          mkdir -p "$artifact_dir"
+          cp "$package_dir/$asset" "$artifact_dir/$asset"
+          cp "$package_dir/SHA256SUMS" "$artifact_dir/SHA256SUMS"
+          echo "name=$asset" >> "$GITHUB_OUTPUT"
+          echo "directory=$artifact_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build validation artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.asset.outputs.name }}
-          path: ${{ steps.asset.outputs.name }}
+          path: ${{ steps.asset.outputs.directory }}
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
-
-  publish-release:
-    needs: build-release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download firmware assets
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          pattern: crosspoint-*.bin
-          merge-multiple: true
-
-      - name: Attach firmware assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          version="${RELEASE_TAG#v}"
-          for device in x3-x4 sticky x4pro papermono; do
-            test -f "dist/crosspoint-${version}-${device}.bin"
-          done
-          test "$(find dist -maxdepth 1 -type f -name 'crosspoint-*.bin' | wc -l)" -eq 4
-          gh release upload "$RELEASE_TAG" dist/crosspoint-*.bin \
-            --repo "$GITHUB_REPOSITORY" --clobber
