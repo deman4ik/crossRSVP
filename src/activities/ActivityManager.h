@@ -88,7 +88,8 @@ class ActivityManager {
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
   void goToBrowser();
-  void goToReader(std::string path, bool allowFastInitialRefresh = false, ReaderLaunchContext launchContext = {});
+  void goToReader(std::string path, bool allowFastInitialRefresh = false,
+                  const ReaderLaunchContext& launchContext = {});
   void goToSleep(bool fromTimeout = false);
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);

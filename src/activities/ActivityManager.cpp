@@ -268,7 +268,7 @@ void ActivityManager::goToBrowser() {
 }
 
 void ActivityManager::goToReader(std::string path, const bool allowFastInitialRefresh,
-                                 const ReaderLaunchContext launchContext) {
+                                 const ReaderLaunchContext& launchContext) {
   if (path.empty()) {
     goToFileBrowser("/");
     return;

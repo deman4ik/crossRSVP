@@ -28,7 +28,7 @@ ReaderActivity::ReaderActivity(const char* name, GfxRenderer& renderer, MappedIn
 
 std::unique_ptr<ReaderActivity> ReaderActivity::create(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                        std::string path, const bool allowFastInitialRefresh,
-                                                       const ReaderLaunchContext launchContext) {
+                                                       const ReaderLaunchContext& launchContext) {
   // ActivityManager requires heap ownership; each branch allocates exactly one screen-lifetime object.
   std::unique_ptr<ReaderActivity> activity;
   if (FsHelpers::hasXtcExtension(path)) {

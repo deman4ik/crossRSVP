@@ -95,7 +95,7 @@ TEST_F(BookGroupingLanguagePreferenceTest, RejectsInvalidMagicVersionValueAndLen
       {'C', 'P', 'G', 'L', 1, 3},
       {'C', 'P', 'G', 'L', 1, 1, 0},
   };
-  for (const auto bytes : invalid) {
+  for (const auto& bytes : invalid) {
     writeBytes(root / "grouping-language.bin", bytes);
     EXPECT_EQ(BookGroupingLanguagePreference(root.string()).load(), BookGroupingLanguagePreference::Choice::Auto);
   }

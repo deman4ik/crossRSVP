@@ -50,7 +50,7 @@ class ReaderActivity : public Activity {
 
   static std::unique_ptr<ReaderActivity> create(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                 std::string path, bool allowFastInitialRefresh,
-                                                ReaderLaunchContext launchContext = {});
+                                                const ReaderLaunchContext& launchContext = {});
 
   void onEnter() override;
   void onExit() override;

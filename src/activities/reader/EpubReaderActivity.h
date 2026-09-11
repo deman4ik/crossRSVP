@@ -194,7 +194,7 @@ class EpubReaderActivity final : public ReaderActivity {
 
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath,
-                              bool allowFastInitialRefresh, ReaderLaunchContext launchContext = {})
+                              bool allowFastInitialRefresh, const ReaderLaunchContext& launchContext = {})
       : ReaderActivity("EpubReader", renderer, mappedInput, std::move(bookPath), allowFastInitialRefresh,
                        launchContext),
         rsvpCheckpointInvalidationPending(launchContext.checkpointInvalidationPending) {}

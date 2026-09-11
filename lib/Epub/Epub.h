@@ -41,8 +41,8 @@ class Epub {
   CssParser::ParseResult parseCssFiles(CssParser::CacheStatus existingCacheStatus) const;
 
  public:
-  explicit Epub(std::string filepath, const std::string& cacheDir)
-      : filepath(std::move(filepath)),
+  explicit Epub(std::string bookFilepath, const std::string& cacheDir)
+      : filepath(std::move(bookFilepath)),
         groupingLanguagePreference(cacheDir + "/epub_" + std::to_string(std::hash<std::string>{}(this->filepath))) {
     // create a cache key based on the filepath
     cachePath = cacheDir + "/epub_" + std::to_string(std::hash<std::string>{}(this->filepath));

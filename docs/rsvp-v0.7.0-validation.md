@@ -23,6 +23,10 @@ site downloads. This task does not publish a new firmware release.
   --fail-on-defect low --fail-on-defect medium --fail-on-defect high`: **PASS,
   no defects**. A separate exhaustive cppcheck pass over the changed RSVP,
   preference, parser, selector, Settings and cache implementation also passes.
+- The final CI follow-up also passes the strict `default` cppcheck profile.
+  Launch-context parameters use const references; the EPUB constructor parameter
+  no longer shadows its field, avoiding a false moved-variable diagnostic.
+  The host suite was rerun (365/365 PASS), followed by all three release builds.
 - `./bin/clang-format-fix -g` and `git diff --check`: PASS.
 - Site: **11/11 generator scenarios PASS**; Chromium browser checks PASS for
   language detection/selection/storage failures, full RU/EN switching, word
@@ -89,16 +93,16 @@ strings and generated SHA-256 files were checked independently against each imag
 
 | Model | Static RAM (bytes) | Application flash (bytes) |
 | --- | ---: | ---: |
-| X3 | 56744 | 5499351 |
-| X4 | 56744 | 5499351 |
-| X4PRO | 100384 | 5401994 |
+| X3 | 56744 | 5499127 |
+| X4 | 56744 | 5499127 |
+| X4PRO | 100384 | 5401722 |
 
 Static RAM is not the free heap available during reading. All images fit the
 6,553,600-byte application partition. Packages remain in ignored
 `artifacts/crossrsvp-<model>-v0.7.0/firmware/`.
 
 ```text
-29352fdc82c99466af548b52a7a8eb82568ce536e4f3dc9d238a921d97984cd2  crossrsvp-x3-v0.7.0.bin
-af050bcfdf2b627ec82e37eeca6374f3f75a29e9663de21dd00a71f970d5437f  crossrsvp-x4-v0.7.0.bin
-40e6d49d4dff3c046f386d7c27a6d32c6a59f0847d1b0f09f10b140cf1cf59a2  crossrsvp-x4pro-v0.7.0.bin
+1981c8b459c097107a56ec2224e0b57d5d13a7c339e36e5473df1775e74bc918  crossrsvp-x3-v0.7.0.bin
+2ca747ac8f806155e83c5ff4c5079240d18628da63725b484523fa2685839e90  crossrsvp-x4-v0.7.0.bin
+faa721abbfabea366029fdd2b7a6a39e4259b3e43dd3ce7cb51a69e1deb19aaa  crossrsvp-x4pro-v0.7.0.bin
 ```
