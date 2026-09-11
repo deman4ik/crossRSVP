@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
-#include <array>
 #include <algorithm>
+#include <array>
 #include <cstdint>
 
 #include "RsvpCheckpoint.h"
@@ -92,9 +92,9 @@ TEST(RsvpCheckpoint, DistinguishesMissingTruncatedAndTrailingData) {
 
   std::array<uint8_t, rsvp::RsvpCheckpointCodec::kEncodedSize + 1> trailing{};
   std::copy(bytes.begin(), bytes.end(), trailing.begin());
-  EXPECT_EQ(rsvp::RsvpCheckpointCodec::decode(trailing.data(), trailing.size(), sampleCheckpoint().bookRevision,
-                                               decoded),
-            rsvp::CheckpointStatus::TrailingData);
+  EXPECT_EQ(
+      rsvp::RsvpCheckpointCodec::decode(trailing.data(), trailing.size(), sampleCheckpoint().bookRevision, decoded),
+      rsvp::CheckpointStatus::TrailingData);
 }
 
 TEST(RsvpCheckpoint, RejectsUnsupportedVersionCorruptionAndWrongRevision) {

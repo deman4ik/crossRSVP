@@ -22,8 +22,7 @@ uint32_t utf8ComposePair(const uint32_t base, const uint32_t mark) {
   return 0;
 }
 
-uint32_t utf8DecodeBounded(const char* input, const size_t length,
-                           size_t& offset) {
+uint32_t utf8DecodeBounded(const char* input, const size_t length, size_t& offset) {
   if (offset >= length) return 0;
   const auto* bytes = reinterpret_cast<const unsigned char*>(input);
   const unsigned char lead = bytes[offset];
@@ -55,11 +54,9 @@ uint32_t utf8DecodeBounded(const char* input, const size_t length,
 
   uint32_t codepoint = lead & ((1 << (7 - expected)) - 1);
   for (int index = 1; index < expected; ++index) {
-    codepoint = (codepoint << 6) |
-                (bytes[offset + static_cast<size_t>(index)] & 0x3F);
+    codepoint = (codepoint << 6) | (bytes[offset + static_cast<size_t>(index)] & 0x3F);
   }
-  const bool overlong = (expected == 2 && codepoint < 0x80) ||
-                        (expected == 3 && codepoint < 0x800) ||
+  const bool overlong = (expected == 2 && codepoint < 0x80) || (expected == 3 && codepoint < 0x800) ||
                         (expected == 4 && codepoint < 0x10000);
   const bool surrogate = codepoint >= 0xD800 && codepoint <= 0xDFFF;
   if (overlong || surrogate || codepoint > 0x10FFFF) {
@@ -70,8 +67,7 @@ uint32_t utf8DecodeBounded(const char* input, const size_t length,
   return codepoint;
 }
 
-bool utf8AppendCodepointToBuffer(const uint32_t codepoint, char* output,
-                                 const size_t capacity, size_t& length) {
+bool utf8AppendCodepointToBuffer(const uint32_t codepoint, char* output, const size_t capacity, size_t& length) {
   unsigned char encoded[4];
   size_t encodedLength = 0;
   if (codepoint < 0x80) {
@@ -165,9 +161,8 @@ std::string utf8ComposeNfc(const std::string& in) {
   return out;
 }
 
-bool utf8ComposeNfcToBuffer(const char* in, const size_t inLength, char* out,
-                            const size_t outCapacity, size_t& outLength,
-                            const bool removeSoftHyphen) {
+bool utf8ComposeNfcToBuffer(const char* in, const size_t inLength, char* out, const size_t outCapacity,
+                            size_t& outLength, const bool removeSoftHyphen) {
   outLength = 0;
   if (out == nullptr || (in == nullptr && inLength != 0) || outCapacity == 0) {
     return false;
@@ -186,15 +181,13 @@ bool utf8ComposeNfcToBuffer(const char* in, const size_t inLength, char* out,
         base = composed;
         continue;
       }
-      if (haveBase &&
-          !utf8AppendCodepointToBuffer(base, out, outCapacity, outLength)) {
+      if (haveBase && !utf8AppendCodepointToBuffer(base, out, outCapacity, outLength)) {
         outLength = 0;
         out[0] = '\0';
         return false;
       }
       haveBase = false;
-      if (!utf8AppendCodepointToBuffer(codepoint, out, outCapacity,
-                                       outLength)) {
+      if (!utf8AppendCodepointToBuffer(codepoint, out, outCapacity, outLength)) {
         outLength = 0;
         out[0] = '\0';
         return false;
@@ -202,8 +195,7 @@ bool utf8ComposeNfcToBuffer(const char* in, const size_t inLength, char* out,
       continue;
     }
 
-    if (haveBase &&
-        !utf8AppendCodepointToBuffer(base, out, outCapacity, outLength)) {
+    if (haveBase && !utf8AppendCodepointToBuffer(base, out, outCapacity, outLength)) {
       outLength = 0;
       out[0] = '\0';
       return false;
@@ -211,8 +203,7 @@ bool utf8ComposeNfcToBuffer(const char* in, const size_t inLength, char* out,
     base = codepoint;
     haveBase = true;
   }
-  if (haveBase &&
-      !utf8AppendCodepointToBuffer(base, out, outCapacity, outLength)) {
+  if (haveBase && !utf8AppendCodepointToBuffer(base, out, outCapacity, outLength)) {
     outLength = 0;
     out[0] = '\0';
     return false;

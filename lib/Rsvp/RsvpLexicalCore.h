@@ -32,7 +32,6 @@ struct PreparedWord {
 
 using RsvpPreparedWord = PreparedWord;
 
-bool prepareRsvpWord(const char* source, size_t sourceLength,
-                     PreparedWord& out);
+bool prepareRsvpWord(const char* source, size_t sourceLength, PreparedWord& out);
 
 }  // namespace rsvp

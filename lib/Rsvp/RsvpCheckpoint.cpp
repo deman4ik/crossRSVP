@@ -34,9 +34,7 @@ void putU64(uint8_t* bytes, const uint64_t value) {
   putU32(bytes + 4, static_cast<uint32_t>(value >> 32));
 }
 
-uint16_t getU16(const uint8_t* bytes) {
-  return static_cast<uint16_t>(bytes[0]) | static_cast<uint16_t>(bytes[1] << 8);
-}
+uint16_t getU16(const uint8_t* bytes) { return static_cast<uint16_t>(bytes[0]) | static_cast<uint16_t>(bytes[1] << 8); }
 
 uint32_t getU32(const uint8_t* bytes) {
   return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |

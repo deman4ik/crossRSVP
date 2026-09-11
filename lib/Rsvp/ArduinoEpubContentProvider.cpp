@@ -24,8 +24,7 @@ ArduinoEpubContentProvider::ArduinoEpubContentProvider(Epub& epub) : epub(epub) 
 
 int ArduinoEpubContentProvider::spineCount() const { return epub.getSpineItemsCount(); }
 
-bool ArduinoEpubContentProvider::streamSpine(const uint16_t spineIndex, ContentByteSink& sink,
-                                             const size_t chunkSize) {
+bool ArduinoEpubContentProvider::streamSpine(const uint16_t spineIndex, ContentByteSink& sink, const size_t chunkSize) {
   if (spineIndex >= static_cast<uint16_t>(epub.getSpineItemsCount())) return false;
   const auto href = epub.getSpineItem(spineIndex).href;
   if (href.empty()) return false;

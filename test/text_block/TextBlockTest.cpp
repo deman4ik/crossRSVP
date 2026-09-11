@@ -1,11 +1,11 @@
-#include "TextBlock.h"
-
 #include <gtest/gtest.h>
 
 #include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
+
+#include "TextBlock.h"
 
 TEST(TextBlockTest, VisibleOffsetsSurviveCacheRoundTrip) {
   const std::vector<std::string> words = {"first", "second", "third"};
