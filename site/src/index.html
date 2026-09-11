@@ -1,8 +1,115 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="CrossRSVP — CrossPoint Reader with an optional RSVP reading mode."><title>CrossRSVP · RSVP reading for Xteink</title><link rel="stylesheet" href="styles.css"></head><body>
-<a data-i18n="skip" class="skip" href="#main">Skip to content</a><header class="site-header"><a class="brand" href="./" data-i18n-aria="home" aria-label="CrossRSVP home"><span class="brand-mark">C</span><span>Cross<span>RSVP</span></span></a><nav data-i18n-aria="navigation" aria-label="Primary"><a data-i18n="navWhy" href="#why">Why RSVP</a><a data-i18n="navDemo" href="#demo">Demo</a><a data-i18n="navDownloads" href="#downloads">Downloads</a></nav><button class="language" id="language" type="button" data-i18n-aria="languageLabel" aria-label="Change language">RU <span aria-hidden="true">↗</span></button></header>
-<main id="main"><section class="hero"><div class="hero-copy"><p data-i18n="eyebrow" class="eyebrow">CrossPoint Reader fork · EPUB</p><h1 data-i18n="hero">Read at your pace,<br><em>one word at a time.</em></h1><p data-i18n="lede" class="lede">CrossRSVP adds an optional RSVP Mode to CrossPoint Reader. Keep your library, settings, and familiar Paged Mode — then focus on the words that matter.</p><div class="hero-actions"><a data-i18n="choose" class="button" href="#downloads">Choose your device <span aria-hidden="true">↓</span></a><a data-i18n="source" class="text-link" href="https://github.com/deman4ik/crossRSVP">View source ↗</a></div></div><div data-i18n-aria="illustration" class="hero-art" aria-label="Illustration of a reader displaying a focused word" role="img"><div class="reader"><div class="reader-top"><span data-i18n="rsvpMode">RSVP MODE</span><span data-i18n="illustrationPace">100 WPM</span></div><div class="word"><span>rea</span><strong>d</strong><span>ing</span></div><div class="reader-rule"></div><div data-i18n="illustrationText" class="reader-page">A calm page. A steady rhythm.<br>Find your focus and keep your place.</div></div><span class="orb orb-one"></span><span class="orb orb-two"></span></div></section>
-<section class="trust-strip"><span data-i18n="builtOn">Built on</span><a href="https://github.com/crosspoint-reader/crosspoint-reader">CrossPoint Reader ↗</a><span class="dot">·</span><span data-i18n="models">For Xteink X3 · X4 · X4 Pro</span></section>
-<section class="section why" id="why"><div class="section-heading"><p data-i18n="whyEyebrow" class="eyebrow">A small change in rhythm</p><h2 data-i18n="why">The reader you know,<br><em>with another way in.</em></h2></div><div class="feature-grid"><article><span class="number">01</span><h3 data-i18n="featurePosition">Keep your place</h3><p data-i18n="positionText">RSVP shares Reading Position with Paged Mode. Pause, return to the page, and pick up where you left off.</p></article><article><span class="number">02</span><h3 data-i18n="featureFocus">Find the focus</h3><p data-i18n="focusText">A fixed ORP keeps one letter in the same place while words change around it. The point is steadiness, not speed promises.</p></article><article><span class="number">03</span><h3 data-i18n="featurePace">Choose the pace</h3><p data-i18n="paceText">Start paused, adjust WPM, and continue from the current word. RSVP is designed for EPUB; unsupported content returns you to pages.</p></article></div></section>
-<section class="demo-section" id="demo"><div class="demo-intro"><p data-i18n="demoEyebrow" class="eyebrow">Try the principle</p><h2 data-i18n="demo">One word.<br><em>One anchor.</em></h2><p data-i18n="demoText">This browser example illustrates RSVP Mode. It is not an E-Ink emulator or a measurement of firmware performance.</p><p data-i18n="companions" class="quiet">This demo shows individual words. Optional firmware grouping supports Russian and English according to the book’s selected language.</p><p data-i18n="quiet" class="quiet">Focus Reading is a separate feature inside Paged Mode. RSVP changes how EPUB words are presented.</p></div><div class="demo-card"><div class="demo-screen"><span class="orp-line" aria-hidden="true"></span><span id="demo-word" aria-live="off">ready</span><span class="demo-state" id="demo-state">Paused</span></div><div class="demo-controls"><button class="button" id="demo-toggle" type="button">Start</button><label for="speed"><span data-i18n="pace">Pace</span> <output id="speed-value">100</output> <span data-i18n="wpm">WPM</span></label><input id="speed" type="range" min="60" max="180" step="10" value="100"><button class="text-button" id="demo-reset" type="button">Restart</button></div><noscript><p class="noscript">Enable JavaScript to play the interactive example. The explanation above remains available.</p></noscript></div></section>
-<section class="section downloads" id="downloads"><div class="section-heading"><p data-i18n="pick" class="eyebrow">Pick the exact model</p><h2 data-i18n="downloads">Stable builds,<br><em>when they are ready.</em></h2><p data-i18n="downloadText" class="section-lede">Pre-releases are never shown as stable downloads. Match the filename to the label on your reader.</p></div><div class="device-grid"><!-- RELEASE_CARDS --></div><div class="install"><div><span data-i18n="next" class="number">Next</span><h3 data-i18n="install">Install with care</h3><p data-i18n="installText">Back up your books and settings, verify the SHA-256 checksum, then use the SD Card Firmware Update menu. Keep the previous image for rollback.</p></div><a data-i18n="installGuide" class="text-link" href="https://github.com/deman4ik/crossRSVP/blob/master/docs/rsvp-release-installation.md">Installation &amp; rollback guide ↗</a></div></section></main>
-<footer><div class="footer-brand"><span class="brand-mark">C</span><span>Cross<span>RSVP</span></span></div><p data-i18n="footer">Open source reading software for Xteink devices.</p><div class="footer-links"><a data-i18n="forkSource" href="https://github.com/deman4ik/crossRSVP">Fork source ↗</a><a href="https://github.com/crosspoint-reader/crosspoint-reader">CrossPoint Reader ↗</a><a data-i18n="attribution" href="https://github.com/crosspoint-reader/crosspoint-tools">Visual direction &amp; attribution ↗</a></div><small data-i18n="independent">CrossRSVP is an independent fork. CrossPoint Reader and related names belong to their respective authors.</small></footer><script src="script.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="CrossRSVP firmware for Xteink X3, X4 and X4 Pro: read pages or follow words one at a time. Download and installation guide.">
+  <title>CrossRSVP · Reading firmware for Xteink</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a data-i18n="skip" class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <a class="brand" href="./" data-i18n-aria="home" aria-label="CrossRSVP home"><span class="brand-mark">C</span><span>Cross<span>RSVP</span></span></a>
+  <nav data-i18n-aria="navigation" aria-label="Primary">
+    <a data-i18n="navWhy" href="#why">Features</a>
+    <a data-i18n="navDemo" href="#demo">Try RSVP</a>
+    <a data-i18n="navDownloads" href="#downloads">Download</a>
+    <a data-i18n="navInstall" href="#install">Install</a>
+  </nav>
+  <button class="language" id="language" type="button" data-i18n-aria="languageLabel" aria-label="Change language">RU <span aria-hidden="true">↗</span></button>
+</header>
+<main id="main">
+  <section class="hero">
+    <div class="hero-copy">
+      <p data-i18n="eyebrow" class="eyebrow">Reading firmware for Xteink</p>
+      <h1 data-i18n="hero">Read your books<br><em>at your own pace.</em></h1>
+      <p data-i18n="lede" class="lede">CrossRSVP is firmware for Xteink X3, X4 and X4 Pro, based on CrossPoint Reader. Read full pages as usual, or turn on RSVP to see the words of an EPUB book appear one at a time in the same place.</p>
+      <div class="hero-actions">
+        <a data-i18n="choose" class="button" href="#downloads">Download firmware <span aria-hidden="true">↓</span></a>
+        <a data-i18n="tryDemo" class="text-link" href="#demo">Try it here ↓</a>
+      </div>
+    </div>
+    <div data-i18n-aria="illustration" class="hero-art" aria-label="Illustration of a reader showing one word with a highlighted letter" role="img">
+      <div class="reader">
+        <div class="reader-top"><span data-i18n="rsvpMode">RSVP MODE</span><span data-i18n="illustrationPace">100 words/min</span></div>
+        <div class="word" data-i18n="illustrationWord"><span>rea</span><strong>d</strong><span>ing</span></div>
+        <div class="reader-rule"></div>
+        <div data-i18n="illustrationText" class="reader-page">Pause whenever you need.<br>Continue where you left off.</div>
+      </div>
+      <span class="orb orb-one"></span><span class="orb orb-two"></span>
+    </div>
+  </section>
+  <section class="trust-strip"><span data-i18n="builtOn">Based on</span><a href="https://github.com/crosspoint-reader/crosspoint-reader">CrossPoint Reader ↗</a><span class="dot">·</span><span data-i18n="models">For Xteink X3 · X4 · X4 Pro</span></section>
+  <section class="section why" id="why">
+    <div class="section-heading">
+      <p data-i18n="whyEyebrow" class="eyebrow">Reading features</p>
+      <h2 data-i18n="why">What you can do<br><em>with CrossRSVP</em></h2>
+    </div>
+    <div class="feature-grid">
+      <article><span class="number">01</span><h3 data-i18n="featurePages">Read full pages</h3><p data-i18n="pagesText">Open books from your SD card, turn pages, and choose your font and text size. Your library and the familiar CrossPoint reading tools are still here.</p></article>
+      <article><span class="number">02</span><h3 data-i18n="featureFocus">Read one word at a time</h3><p data-i18n="focusText">In RSVP, words from your EPUB appear in sequence. A highlighted letter stays at the same point on screen, giving your eyes a place to rest as the words change.</p></article>
+      <article><span class="number">03</span><h3 data-i18n="featurePace">Set your reading speed</h3><p data-i18n="paceText">Choose how many words to show per minute. Pause whenever you need, step forward, or go back to reread. Adjust the pauses for long words and punctuation.</p></article>
+      <article><span class="number">04</span><h3 data-i18n="featurePosition">Return to the page</h3><p data-i18n="positionText">Switch from RSVP back to the book to reread a passage or see an image or table. Your reading position is saved when you leave the book.</p></article>
+      <article><span class="number">05</span><h3 data-i18n="featureGroups">Keep short words together</h3><p data-i18n="groupsText">Enable word grouping to show up to two short supporting words beside the main word. They appear in a smaller font. Leave grouping off to read one word at a time.</p></article>
+      <article><span class="number">06</span><h3 data-i18n="featurePageFocus">Emphasize word beginnings</h3><p data-i18n="pageFocusText">Focus Reading makes the beginning of each word bold on a full page. You still turn pages yourself. Enable it in Text settings → Style.</p></article>
+    </div>
+  </section>
+  <section class="demo-section" id="demo">
+    <div class="demo-intro">
+      <p data-i18n="demoEyebrow" class="eyebrow">An example you can try</p>
+      <h2 data-i18n="demo">Try reading<br><em>word by word</em></h2>
+      <p data-i18n="demoText">Press Start and follow the highlighted letter as the words change. Move the slider to find a comfortable speed, or pause to take a break.</p>
+    </div>
+    <div class="demo-card">
+      <div class="demo-screen"><span class="orp-line" aria-hidden="true"></span><span id="demo-word" aria-live="off">You</span><span class="demo-state" id="demo-state">Paused</span></div>
+      <div class="demo-controls">
+        <button class="button" id="demo-toggle" type="button">Start</button>
+        <label for="speed"><span data-i18n="pace">Speed</span> <output id="speed-value">100</output> <span data-i18n="wpm">words/min</span></label>
+        <input id="speed" type="range" min="60" max="180" step="10" value="100">
+        <button class="text-button" id="demo-reset" type="button">Restart</button>
+      </div>
+      <p data-i18n="demoNote" class="demo-note">This is a browser example. On the reader, the pace also depends on how quickly its E-Ink screen can refresh.</p>
+      <noscript><p class="noscript">Enable JavaScript to try the example. Firmware downloads and installation steps are available below.</p></noscript>
+    </div>
+  </section>
+  <section class="section downloads" id="downloads">
+    <div class="section-heading">
+      <p data-i18n="pick" class="eyebrow">X3 · X4 · X4 Pro</p>
+      <h2 data-i18n="downloads">Download for<br><em>your reader</em></h2>
+      <p data-i18n="downloadText" class="section-lede">Choose the model printed on your reader. X4 and X4 Pro use different firmware files.</p>
+    </div>
+    <div class="device-grid"><!-- RELEASE_CARDS --></div>
+    <a data-i18n="allReleases" class="text-link all-releases" href="https://github.com/deman4ik/crossRSVP/releases">All versions on GitHub ↗</a>
+  </section>
+  <section class="section installation" id="install">
+    <div class="section-heading">
+      <p data-i18n="installEyebrow" class="eyebrow">Getting started</p>
+      <h2 data-i18n="install">How to install<br><em>CrossRSVP</em></h2>
+      <p data-i18n="installText" class="section-lede">Already using CrossPoint Reader or CrossRSVP? Update directly from your SD card.</p>
+    </div>
+    <ol class="install-steps">
+      <li><h3 data-i18n="stepDownload">Download your firmware</h3><p data-i18n="stepDownloadText">Choose your reader above and download its .bin file. Back up the books and settings on your SD card, and keep the previous firmware file.</p></li>
+      <li><h3 data-i18n="stepCopy">Copy it to the SD card</h3><p data-i18n="stepCopyText">Put the .bin file on the card. If you copied it over USB on X4 Pro, safely eject the drive on your computer before leaving USB Transfer on the reader.</p></li>
+      <li><h3 data-i18n="stepUpdate">Start the update</h3><p data-i18n="stepUpdateText">Open Settings → System → SD Card Firmware Update. Select the file, confirm the update, and wait for the restart without turning the reader off.</p></li>
+      <li><h3 data-i18n="stepRead">Open a book and try RSVP</h3><p data-i18n="stepReadText">Open an EPUB and bring up the reading menu. Choose More → RSVP Reading Mode in the toolbar, or RSVP Reading Mode in the list menu. Reading starts paused.</p></li>
+    </ol>
+    <div class="install-links">
+      <p data-i18n="firstInstall">Still using the factory firmware? Start with the <a href="https://github.com/crosspoint-reader/crosspoint-reader#install-firmware">CrossPoint installation guide ↗</a>, then follow the steps above.</p>
+      <a data-i18n="installGuide" class="text-link" href="https://github.com/deman4ik/crossRSVP/blob/master/docs/rsvp-release-installation.md">Detailed instructions and how to go back ↗</a>
+    </div>
+  </section>
+</main>
+<footer>
+  <div class="footer-brand"><span class="brand-mark">C</span><span>Cross<span>RSVP</span></span></div>
+  <p data-i18n="footer">Free, open-source firmware for Xteink readers.</p>
+  <div class="footer-links">
+    <a data-i18n="forkSource" href="https://github.com/deman4ik/crossRSVP">Source code ↗</a>
+    <a href="https://github.com/crosspoint-reader/crosspoint-reader">CrossPoint Reader ↗</a>
+    <a data-i18n="attribution" href="https://github.com/crosspoint-reader/crosspoint-tools">Design inspiration: CrossPoint Tools ↗</a>
+  </div>
+  <small data-i18n="independent">CrossRSVP is an independent project based on CrossPoint Reader.</small>
+</footer>
+<script src="script.js"></script>
+</body>
+</html>

@@ -38,9 +38,9 @@ function validateRelease(release) {
       !Array.isArray(release.assets) || !validUrl(release.html_url)) {
     throw new Error('GitHub releases API returned malformed release data');
   }
-  if (!release.draft && !release.prerelease &&
+  if (!release.draft &&
       (typeof release.published_at !== 'string' || !Number.isFinite(Date.parse(release.published_at)))) {
-    throw new Error('Stable release has an invalid publication date');
+    throw new Error('Release has an invalid publication date');
   }
   for (const asset of release.assets) {
     if (!asset || typeof asset.name !== 'string' || !validUrl(asset.browser_download_url)) {
@@ -52,7 +52,7 @@ export function selectRelease(releases, prefix) {
   const pattern = new RegExp(`^${prefix}(\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?)\\.bin$`);
   const matches = [];
   for (const release of releases) {
-    if (release.draft || release.prerelease) continue;
+    if (release.draft) continue;
     const assets = release.assets.filter(asset => pattern.test(asset.name));
     if (assets.length > 1) throw new Error(`Multiple matching assets found for ${prefix}`);
     if (assets.length) matches.push({ release, asset: assets[0] });
@@ -64,11 +64,11 @@ export function selectRelease(releases, prefix) {
   }
   const { release, asset } = matches[0];
   return { version: `v${asset.name.match(pattern)[1]}`, date: release.published_at,
-           notes: release.html_url, url: asset.browser_download_url };
+           notes: release.html_url, url: asset.browser_download_url, beta: release.prerelease };
 }
 function card(model, release) {
-  if (!release) return `<article class="device-card unavailable"><div class="device-icon" aria-hidden="true">${model[0].toUpperCase()}</div><h3>${esc(model[1])}</h3><p class="status" data-i18n="stable">Stable release not published yet.</p><a data-i18n="view" href="https://github.com/${repo}/releases">View Releases <span aria-hidden="true">↗</span></a></article>`;
-  return `<article class="device-card"><div class="device-icon" aria-hidden="true">${model[0].toUpperCase()}</div><h3>${esc(model[1])}</h3><p class="release-meta"><strong>${esc(release.version)}</strong> · ${esc(release.date.slice(0, 10))}</p><div class="card-actions"><a data-i18n="download" class="button small" href="${esc(release.url)}">Download .bin <span aria-hidden="true">↓</span></a><a data-i18n="notes" class="text-link" href="${esc(release.notes)}">Release notes ↗</a></div></article>`;
+  if (!release) return `<article class="device-card unavailable"><div class="device-icon" aria-hidden="true">${model[0].toUpperCase()}</div><h3>${esc(model[1])}</h3><p class="status" data-i18n="unavailable">No firmware file for this model yet.</p><a data-i18n="view" href="https://github.com/${repo}/releases">View releases <span aria-hidden="true">↗</span></a></article>`;
+  return `<article class="device-card"><div class="device-icon" aria-hidden="true">${model[0].toUpperCase()}</div><h3>${esc(model[1])}</h3><p class="release-meta"><strong>${esc(release.version)}</strong> · ${esc(release.date.slice(0, 10))}${release.beta ? ' <span class="beta-badge">beta</span>' : ''}</p><div class="card-actions"><a data-i18n="download" class="button small" href="${esc(release.url)}">Download .bin <span aria-hidden="true">↓</span></a><a data-i18n="notes" class="text-link" href="${esc(release.notes)}">What’s new ↗</a></div></article>`;
 }
 export async function build(releases) {
   if (!Array.isArray(releases)) throw new Error('Release input must be an array');

@@ -3,11 +3,25 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { build, fetchReleases } from '../build.mjs';
 
-test('empty or prerelease-only input keeps every model clearly unavailable', async () => {
-  await build([{ tag_name:'v0.6.0', prerelease:true, draft:false, html_url:'https://notes', assets:[{name:'crossrsvp-x3-v0.6.0.bin',browser_download_url:'https://download'}] }]);
-  const html = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
-  assert.equal((html.match(/Stable release not published yet/g) || []).length, 3);
-  assert.doesNotMatch(html, /crossrsvp-x3-v0\.6\.0\.bin/);
+test('published prereleases provide model downloads marked beta', async () => {
+  await build([sample('v0.6.0', '2026-09-01', ['crossrsvp-x3-v0.6.0.bin'], { prerelease: true })]);
+  const html = await htmlOutput();
+  assert.match(html, /href="https:\/\/example\.test\/crossrsvp-x3-v0\.6\.0\.bin"/);
+  assert.equal((html.match(/class="beta-badge">beta/g) || []).length, 1);
+  assert.equal((html.match(/No firmware file for this model yet/g) || []).length, 2);
+});
+test('newest published file wins per model regardless of prerelease status', async () => {
+  await build([
+    sample('v1.0.0', '2026-01-01', ['crossrsvp-x3-v1.0.0.bin', 'crossrsvp-x4-v1.0.0.bin']),
+    sample('v1.1.0-beta', '2026-02-01', ['crossrsvp-x3-v1.1.0-beta.bin', 'crossrsvp-x4pro-v1.1.0-beta.bin'], { prerelease: true }),
+    sample('v1.1.0', '2026-03-01', ['crossrsvp-x4pro-v1.1.0.bin'])
+  ]);
+  const html = await htmlOutput();
+  assert.match(html, /example\.test\/crossrsvp-x3-v1\.1\.0-beta\.bin/);
+  assert.match(html, /example\.test\/crossrsvp-x4-v1\.0\.0\.bin/);
+  assert.match(html, /example\.test\/crossrsvp-x4pro-v1\.1\.0\.bin/);
+  assert.doesNotMatch(html, /example\.test\/crossrsvp-x4pro-v1\.1\.0-beta\.bin/);
+  assert.equal((html.match(/class="beta-badge">beta/g) || []).length, 1);
 });
 test('selects exact model assets and preserves independent versions', async () => {
   const release = (tag, date, assets) => ({tag_name:tag, prerelease:false, draft:false, published_at:date, html_url:`https://github.com/deman4ik/crossRSVP/releases/tag/${tag}`, assets:assets.map(name=>({name,browser_download_url:`https://example.test/${name}`}))});
@@ -41,7 +55,7 @@ const htmlOutput = () => readFile(new URL('../dist/index.html', import.meta.url)
 test('empty and draft-only catalogs do not manufacture downloads', async () => {
   for (const releases of [[], [sample('v9.0.0', null, ['crossrsvp-x3-v9.0.0.bin'], { draft: true })]]) {
     await build(releases); const html = await htmlOutput();
-    assert.equal((html.match(/Stable release not published yet/g) || []).length, 3);
+    assert.equal((html.match(/No firmware file for this model yet/g) || []).length, 3);
     assert.doesNotMatch(html, /href="[^"\n]*\.bin"/);
   }
 });
@@ -60,7 +74,7 @@ test('publication order, image version and unrelated filenames are handled indep
 test('malformed metadata and unsafe URLs fail before replacing the previous HTML', async () => {
   await build([]); const previous = await htmlOutput();
   const good = sample('v1.0.0', '2026-01-01', ['crossrsvp-x3-v1.0.0.bin']);
-  for (const value of [null, {}, { ...good, assets: null }, { ...good, published_at: 'yesterday' },
+  for (const value of [null, {}, { ...good, assets: null }, { ...good, published_at: 'yesterday' }, { ...good, prerelease: true, published_at: null },
     { ...good, html_url: 'javascript:alert(1)' },
     { ...good, assets: [{ name: 'crossrsvp-x3-v1.0.0.bin', browser_download_url: 'data:text/html,hello' }] }]) {
     await assert.rejects(() => build([value]));

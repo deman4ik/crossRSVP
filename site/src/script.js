@@ -1,34 +1,76 @@
 (() => {
   const russian = {
-    skip: 'К содержимому', navigation: 'Основная навигация', home: 'Главная CrossRSVP',
-    languageLabel: 'Switch to English', navWhy: 'Зачем RSVP', navDemo: 'Демо', navDownloads: 'Загрузки',
-    eyebrow: 'Форк CrossPoint Reader · EPUB', hero: 'Читайте в своём темпе,<br><em>по одному слову.</em>',
-    lede: 'CrossRSVP добавляет в CrossPoint Reader режим RSVP. Библиотека, настройки и постраничный режим сохраняются. Вы выбираете способ чтения.',
-    choose: 'Выбрать устройство ↓', source: 'Исходный код ↗', builtOn: 'На основе', models: 'Для Xteink X3 · X4 · X4 Pro',
-    illustration: 'Иллюстрация ридера со словом и выделенной опорной буквой', rsvpMode: 'РЕЖИМ RSVP', illustrationPace: '100 слов/мин',
-    illustrationText: 'Спокойная страница. Ровный ритм.<br>Сохраняйте фокус и позицию чтения.',
-    whyEyebrow: 'Небольшое изменение ритма', why: 'Знакомый ридер,<br><em>ещё один способ чтения.</em>',
-    featurePosition: 'Сохраняйте позицию', positionText: 'RSVP и постраничный режим используют общую позицию чтения. Поставьте на паузу, вернитесь к странице и продолжите с того же места.',
-    featureFocus: 'Найдите фокус', focusText: 'Опорная буква ORP остаётся на месте, пока слова меняются вокруг неё. Вы можете оценить удобство фиксации без обещаний ускорения чтения.',
-    featurePace: 'Выбирайте темп', paceText: 'Запустите пример, измените темп и продолжите с текущего слова. RSVP предназначен для EPUB; неподдерживаемое содержимое доступно в постраничном режиме.',
-    demoEyebrow: 'Попробуйте принцип', demo: 'Одно слово.<br><em>Одна опора.</em>',
-    demoText: 'Этот пример в браузере показывает принцип RSVP. Это не эмулятор E-Ink и не измерение скорости прошивки.',
-    companions: 'В примере слова показываются отдельно. Дополнительная группировка в прошивке поддерживает русский и английский согласно выбранному языку книги.',
-    quiet: 'Focus Reading — отдельная функция постраничного режима. RSVP меняет способ показа слов EPUB.',
-    pace: 'Темп', wpm: 'слов/мин', pick: 'Выберите точную модель', downloads: 'Стабильные сборки,<br><em>когда они готовы.</em>',
-    downloadText: 'Предварительные релизы не показываются как стабильные. Сверьте имя файла с обозначением на ридере.',
-    stable: 'Стабильный релиз пока не опубликован.', view: 'Смотреть релизы ↗', download: 'Скачать .bin ↓', notes: 'Что нового ↗',
-    next: 'Далее', install: 'Установка и откат',
-    installText: 'Сохраните копию книг и настроек, проверьте SHA-256 и используйте меню обновления прошивки с SD-карты. Оставьте предыдущий образ для отката.',
-    installGuide: 'Инструкция по установке и откату ↗', footer: 'Открытая прошивка для ридеров Xteink.',
-    forkSource: 'Исходники форка ↗', attribution: 'Визуальный стиль и авторство ↗',
-    independent: 'CrossRSVP — независимый форк. CrossPoint Reader и связанные названия принадлежат соответствующим авторам.'
-  };
+    "skip": "К содержимому",
+    "navigation": "Основная навигация",
+    "home": "Главная CrossRSVP",
+    "languageLabel": "Switch to English",
+    "navWhy": "Возможности",
+    "navDemo": "Пример",
+    "navDownloads": "Скачать",
+    "navInstall": "Установка",
+    "eyebrow": "Прошивка для чтения на Xteink",
+    "hero": "Читайте книги<br><em>в своём темпе.</em>",
+    "lede": "CrossRSVP — прошивка для Xteink X3, X4 и X4 Pro на основе CrossPoint Reader. Читайте книги постранично или включайте RSVP: слова из EPUB будут появляться по очереди в одном месте экрана.",
+    "choose": "Скачать прошивку ↓",
+    "tryDemo": "Попробовать на сайте ↓",
+    "builtOn": "На основе",
+    "models": "Для Xteink X3 · X4 · X4 Pro",
+    "illustration": "Ридер показывает одно слово с выделенной буквой",
+    "rsvpMode": "РЕЖИМ RSVP",
+    "illustrationPace": "100 слов/мин",
+    "illustrationWord": "<span>чи</span><strong>т</strong><span>ать</span>",
+    "illustrationText": "Пауза в любой момент.<br>Продолжайте с того же места.",
+    "whyEyebrow": "Возможности для чтения",
+    "why": "Что умеет<br><em>CrossRSVP</em>",
+    "featurePages": "Обычное чтение по страницам",
+    "pagesText": "Открывайте книги с SD-карты, листайте страницы, выбирайте шрифт и размер текста. Библиотека и привычные инструменты CrossPoint остаются доступны.",
+    "featureFocus": "Чтение слово за словом",
+    "focusText": "В режиме RSVP слова из EPUB появляются по очереди. Одна буква в каждом слове выделена и находится в одной точке экрана — на ней можно удерживать взгляд.",
+    "featurePace": "Настройка скорости и пауз",
+    "paceText": "Выберите количество слов в минуту. Ставьте чтение на паузу, двигайтесь по одному слову или возвращайтесь назад. Настройте длительность пауз на длинных словах и знаках препинания.",
+    "featurePosition": "Возврат к странице",
+    "positionText": "Переключайтесь из RSVP обратно к книге, чтобы перечитать абзац, рассмотреть иллюстрацию или таблицу. При выходе из книги место, на котором вы остановились, сохраняется.",
+    "featureGroups": "Короткие слова вместе",
+    "groupsText": "Включите группировку, чтобы рядом с основным словом появлялись до двух коротких служебных слов. Они показываются уменьшенным шрифтом. С выключенной группировкой слова идут по одному.",
+    "featurePageFocus": "Выделение начала слов",
+    "pageFocusText": "Функция Focus Reading выделяет жирным начало каждого слова на обычной странице. Страницы вы листаете сами. Включить её можно в разделе «Настройки текста → Стиль».",
+    "demoEyebrow": "Пример чтения в RSVP",
+    "demo": "Попробуйте читать<br><em>слово за словом</em>",
+    "demoText": "Нажмите «Начать» и следите за выделенной буквой, пока слова сменяют друг друга. Ползунком подберите удобную скорость. В любой момент можно сделать паузу.",
+    "demoNote": "Это пример в браузере. На ридере темп также зависит от скорости обновления экрана E-Ink.",
+    "pace": "Скорость",
+    "wpm": "слов/мин",
+    "pick": "X3 · X4 · X4 Pro",
+    "downloads": "Скачать для<br><em>вашего ридера</em>",
+    "downloadText": "Выберите модель, указанную на вашем устройстве. Для X4 и X4 Pro нужны разные файлы прошивки.",
+    "unavailable": "Для этой модели пока нет файла прошивки.",
+    "view": "Открыть релизы ↗",
+    "download": "Скачать .bin ↓",
+    "notes": "Что нового ↗",
+    "allReleases": "Все версии на GitHub ↗",
+    "installEyebrow": "С чего начать",
+    "install": "Как установить<br><em>CrossRSVP</em>",
+    "installText": "Если на ридере уже установлен CrossPoint Reader или CrossRSVP, обновите прошивку с SD-карты.",
+    "stepDownload": "Скачайте прошивку",
+    "stepDownloadText": "Выберите свой ридер выше и скачайте файл .bin. Сохраните копию книг и настроек с SD-карты, а также файл предыдущей прошивки.",
+    "stepCopy": "Скопируйте файл на SD-карту",
+    "stepCopyText": "Поместите файл .bin на карту. Если копируете через USB на X4 Pro, сначала безопасно извлеките накопитель на компьютере, а затем выйдите из режима передачи USB на ридере.",
+    "stepUpdate": "Запустите обновление",
+    "stepUpdateText": "Откройте «Настройки → Система → Обновление системы с SD-карты». Выберите файл, подтвердите обновление и дождитесь перезапуска. Не выключайте ридер во время установки.",
+    "stepRead": "Откройте книгу и включите RSVP",
+    "stepReadText": "Откройте EPUB и вызовите меню чтения. В панели выберите «Прочее → Режим чтения RSVP», в меню-списке — «Режим чтения RSVP». Режим откроется на паузе.",
+    "firstInstall": "На устройстве заводская прошивка? Сначала установите CrossPoint Reader по <a href=\"https://github.com/crosspoint-reader/crosspoint-reader#install-firmware\">инструкции проекта ↗</a>, затем выполните шаги выше.",
+    "installGuide": "Подробная инструкция и возврат к прежней версии ↗",
+    "footer": "Бесплатная прошивка с открытым исходным кодом для ридеров Xteink.",
+    "forkSource": "Исходный код ↗",
+    "attribution": "Дизайн вдохновлён CrossPoint Tools ↗",
+    "independent": "CrossRSVP — самостоятельный проект на основе CrossPoint Reader."
+};
   const states = {
     en: { start: 'Start', resume: 'Continue', pause: 'Pause', paused: 'Paused', playing: 'Playing', ended: 'Finished', restart: 'Restart' },
-    ru: { start: 'Запустить', resume: 'Продолжить', pause: 'Пауза', paused: 'Пауза', playing: 'Воспроизведение', ended: 'Завершено', restart: 'Заново' }
+    ru: { start: 'Начать', resume: 'Продолжить', pause: 'Пауза', paused: 'Пауза', playing: 'Чтение', ended: 'Завершено', restart: 'Заново' }
   };
-  const passages = { en: 'A calm page finds its rhythm one word at a time.', ru: 'Спокойная страница находит ритм слово за словом.' };
+  const passages = { en: 'You can read one word at a time. Choose a comfortable pace and pause whenever you need.', ru: 'Вы можете читать слово за словом. Выберите удобную скорость и делайте паузы, когда нужно.' };
   const translated = [...document.querySelectorAll('[data-i18n]')].map(node => ({ node, key: node.dataset.i18n, english: node.innerHTML }));
   const named = [...document.querySelectorAll('[data-i18n-aria]')].map(node => ({ node, key: node.dataset.i18nAria, english: node.getAttribute('aria-label') }));
   const languageButton = document.getElementById('language');
@@ -71,6 +113,10 @@
   function applyLanguage() {
     pause(); words = passages[language].split(/\s+/u); index = 0; started = false; ended = false;
     document.documentElement.lang = language;
+    document.title = language === 'ru' ? 'CrossRSVP — прошивка для чтения на Xteink' : 'CrossRSVP · Reading firmware for Xteink';
+    document.querySelector('meta[name="description"]').content = language === 'ru'
+      ? 'CrossRSVP для Xteink X3, X4 и X4 Pro: чтение по страницам и слово за словом. Скачать прошивку и узнать, как её установить.'
+      : 'CrossRSVP firmware for Xteink X3, X4 and X4 Pro: read pages or follow words one at a time. Download and installation guide.';
     for (const entry of translated) entry.node.innerHTML = language === 'ru' ? russian[entry.key] : entry.english;
     for (const entry of named) entry.node.setAttribute('aria-label', language === 'ru' ? russian[entry.key] : entry.english);
     languageButton.textContent = language === 'ru' ? 'EN ↗' : 'RU ↗';
