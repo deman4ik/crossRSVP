@@ -57,6 +57,9 @@ class Scenario:
     expected_controls: tuple[tuple[int, int], ...] = ()
     expected_settings: tuple[tuple[str, int], ...] = ()
     requires_rsvp: bool = True
+    menu_language: str = "RU"
+    expected_groups: tuple[str, ...] = ()
+    expected_book_language: int | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -98,6 +101,7 @@ def write_simulator_state(
     pace_wpm: int,
     short_word_grouping: bool,
     start_home: bool,
+    menu_language: str = "RU",
 ) -> None:
     fs_root = run_root / "fs_"
     books = fs_root / "books"
@@ -109,7 +113,7 @@ def write_simulator_state(
 
     settings = {
         "embeddedStyle": 1,
-        "language": "RU",
+        "language": menu_language,
         "orientation": orientation,
         "rsvpFontSize": rsvp_font_size,
         "rsvpGuideStyle": 1,
@@ -190,6 +194,7 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
             scenario.pace_wpm,
             scenario.short_word_grouping,
             scenario.start_home,
+            scenario.menu_language,
         )
         env = os.environ.copy()
         env["CROSSPOINT_SIM_INPUT_SCRIPT"] = delayed_inputs(scenario.input_script)
@@ -220,6 +225,25 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
         log_path.write_text(completed.stdout, encoding="utf-8")
         if completed.returncode != 0:
             raise RuntimeError(f"{scenario.name}: simulator exited {completed.returncode}; see {log_path}")
+        if scenario.expected_book_language is not None:
+            preferences = list((run_root / "fs_" / ".crosspoint").glob("epub_*/grouping-language.bin"))
+            if len(preferences) != 1 or preferences[0].read_bytes() != b"CPGL\x01" + bytes([scenario.expected_book_language]):
+                raise RuntimeError(f"{scenario.name}: per-book language was not persisted")
+            # Rebuild derived metadata/layout while retaining durable book state,
+            # then start a new process against the same SD directory.
+            for cache_file in preferences[0].parent.iterdir():
+                if cache_file.name not in ("grouping-language.bin", "progress.bin", "rsvp_checkpoint.bin", "rsvp_checkpoint.bin.bak"):
+                    if cache_file.is_dir():
+                        shutil.rmtree(cache_file)
+                    else:
+                        cache_file.unlink()
+            env["CROSSPOINT_SIM_INPUT_SCRIPT"] = delayed_inputs("1200:ENTER:500;3100:ENTER;14000:QUIT")
+            env["CROSSPOINT_SIM_SCREENSHOTS"] = screenshot_schedule(output, {3200: f"{scenario.name}-restarted.bmp"})
+            restarted = subprocess.run([str(program)], cwd=run_root, env=env, text=True,
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20, check=False)
+            (output / f"{scenario.name}-restarted.log").write_text(restarted.stdout, encoding="utf-8")
+            if restarted.returncode or "group count=2 active=1 words=the|night.|" not in restarted.stdout:
+                raise RuntimeError(f"{scenario.name}: selection did not survive restart/cache rebuild")
         marker, _ = DEVICE_PROFILES[device]
         if not any(line.endswith(marker) for line in completed.stdout.splitlines()):
             raise RuntimeError(f"{scenario.name}: {device} profile was not detected")
@@ -227,6 +251,18 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
             raise RuntimeError(f"{scenario.name}: RSVP activity was not entered")
         if scenario.short_word_grouping and "short-word-grouping=on" not in completed.stdout:
             raise RuntimeError(f"{scenario.name}: Short-word grouping setting was not applied")
+        if scenario.name == "language-selector-touch":
+            before, during = completed.stdout.split("Entering activity: Settings", 1)
+            during, after = during.split("Exiting activity: Settings", 1)
+            groups = lambda text: re.findall(r"\[RSVP\] group [^\n]+", text)
+            if groups(during) or not groups(after) or groups(before)[-1] != groups(after)[0]:
+                raise RuntimeError("language-selector-touch: changing language moved the paused group")
+        cursor = 0
+        for expected in scenario.expected_groups:
+            found = completed.stdout.find(expected, cursor)
+            if found < 0:
+                raise RuntimeError(f"{scenario.name}: missing ordered presentation group {expected!r}")
+            cursor = found + len(expected)
         if scenario.fatal_load:
             required = "Injected simulator RSVP source-open failure"
             if required not in completed.stdout or activity_entry_count(completed.stdout, "EpubReader") < 2:
@@ -497,6 +533,7 @@ def scenarios(device: str) -> list[Scenario]:
     expected_max = RSVP_EXPECTED_MAX_WPM[device]
     pace_steps = (expected_max - RSVP_PACE_MIN_WPM) // RSVP_PACE_STEP_WPM
     return [
+
         Scenario(
             name="flow-portrait",
             orientation=0,
@@ -698,7 +735,7 @@ def touch_scenarios() -> list[Scenario]:
             # Enter RSVP, open its Settings modal, select the Reader tab, then
             # tap the RSVP Pace row from its minimum to the X4 Pro cap.
             f"{entry};4100:TAP:360,616;5600:TAP:180,110;"
-            + ";".join(f"{6200 + index * 450}:TAP:240,455" for index in range(
+            + ";".join(f"{6200 + index * 450}:TAP:240,521" for index in range(
                 (RSVP_EXPECTED_MAX_WPM["x4pro"] - RSVP_PACE_MIN_WPM) // RSVP_PACE_STEP_WPM
             ))
             + ";9800:QUIT",
@@ -789,6 +826,75 @@ def touch_scenarios() -> list[Scenario]:
     return result
 
 
+def language_scenarios(device: str) -> list[Scenario]:
+    english_groups = (
+        "group count=3 active=2 words=with|the|house.",
+        "group count=1 active=0 words=during||",
+        "group count=2 active=1 words=the|night.|",
+        "group count=1 active=0 words=without||",
+        "group count=2 active=1 words=a|coat.|",
+        "group count=3 active=2 words=I|don't|know.",
+        "group count=1 active=0 words=they're||",
+        "group count=2 active=1 words=not|ready.|",
+        "group count=2 active=1 words=wouldn't|go.|",
+        "group count=2 active=1 words=John's|book.|",
+    )
+    # Long Confirm uses the same logical input on all profiles. Touch-only
+    # selector coverage is provided separately from the language-policy cases.
+    playback = "1200:ENTER:500;3100:ENTER;26000:QUIT"
+    standalone = ("group count=1 active=0 words=with||",
+                  "group count=1 active=0 words=the||",
+                  "group count=1 active=0 words=house.||")
+    return [
+        *([Scenario("language-selector-touch", 0,
+                    "1200:ENTER:500;2800:TAP:360,616;4100:TAP:180,110;4800:TAP:240,287;"
+                    "6000:TAP:240,270;7200:HOME;8500:TAP:360,546;11000:QUIT",
+                    {5500: "language-selector-touch.bmp", 7800: "language-touch-return.bmp", 9700: "language-touch-step.bmp"},
+                    fixture_name="language-fr-en", quick_rsvp=True, short_word_grouping=True,
+                    expected_book_language=2,
+                    expected_groups=(standalone[0], "group count=2 active=1 words=the|house.|"))]
+          if device == "x4pro" else []),
+        Scenario("language-selector-buttons", 0,
+                 "1200:ENTER;1800:DOWN;2200:DOWN;2600:DOWN;3000:DOWN;3400:ENTER;"
+                 "4200:DOWN;4600:DOWN;5000:ENTER;5800:BACK;6600:ENTER:500;9500:QUIT",
+                 {4000: "language-selector-buttons.bmp", 8300: "language-selected-english.bmp"},
+                 fixture_name="language-fr-en", quick_rsvp=True, short_word_grouping=True,
+                 expected_book_language=2, expected_groups=(english_groups[0],)),
+        Scenario("language-auto-english", 0, playback,
+                 {2600: "language-auto-english.bmp"}, fixture_name="language-en",
+                 quick_rsvp=True, short_word_grouping=True, expected_groups=english_groups),
+        Scenario("language-auto-first-unsupported", 0, playback,
+                 {2600: "language-auto-first-unsupported.bmp"}, fixture_name="language-fr-en",
+                 quick_rsvp=True, short_word_grouping=True, expected_groups=standalone),
+        Scenario("language-grouping-disabled", 0, playback,
+                 {2600: "language-grouping-disabled.bmp"}, fixture_name="language-en",
+                 quick_rsvp=True, expected_groups=standalone),
+        Scenario("language-russian-english-menus", 0, "1200:ENTER:500;2600:DOWN;4800:QUIT",
+                 {4000: "language-russian-english-menus.bmp"}, fixture_name="grouping",
+                 quick_rsvp=True, short_word_grouping=True, menu_language="EN",
+                 expected_groups=("group count=3 active=1 words=не|сделал|бы",)),
+    ]
+
+
+def build_language_fixtures(fixture_root: Path) -> dict[str, Path]:
+    fixtures = {}
+    passage = "with the house. during the night. without a coat. I don't know. they're not ready. wouldn't go. John's book."
+    for name, languages in (("language-en", "<dc:language> en-US </dc:language>"),
+                            ("language-fr-en", "<dc:language>fr</dc:language><dc:language>en</dc:language>")):
+        source = fixture_root / name
+        shutil.copytree(FIXTURE_SOURCE, source)
+        opf = source / "OEBPS" / "content.opf"
+        opf.write_text(opf.read_text().replace("<dc:language>ru</dc:language>", languages), encoding="utf-8")
+        (source / "OEBPS" / "chapter.xhtml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Grouping languages</title></head>'
+            f'<body><p>{passage}</p></body></html>', encoding="utf-8")
+        fixture = fixture_root / f"{name}.epub"
+        subprocess.run([sys.executable, str(FIXTURE_BUILDER), str(source), str(fixture)], check=True)
+        fixtures[name] = fixture
+    return fixtures
+
+
 def main() -> int:
     args = parse_args()
     config = configparser.ConfigParser()
@@ -857,7 +963,9 @@ def main() -> int:
             "grouping": grouping_fixture,
             "long-word": long_word_fixture,
         }
+        fixtures.update(build_language_fixtures(fixture_root))
         available = touch_scenarios() if args.device == "x4pro" else scenarios(args.device)
+        available.extend(language_scenarios(args.device))
         selected = [scenario for scenario in available if not args.scenario or scenario.name in args.scenario]
         unknown = set(args.scenario or ()) - {scenario.name for scenario in available}
         if unknown:

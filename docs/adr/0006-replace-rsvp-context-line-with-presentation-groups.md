@@ -8,6 +8,8 @@ CrossRSVP will retire the static RSVP Context Line and present one bounded Prese
 
 Companion Eligibility is determined by a bounded, Russian-specific lexical policy rather than by displaying arbitrary previous and following words. Forward, backward, and bidirectional attachment roles allow short prepositions, coordinators, negation, selected clitic particles, and an experimental set of nominative personal pronouns to share a frame with an adjacent Active Word. Grouping never crosses a punctuation pause or document boundary.
 
+Issue [#14](https://github.com/deman4ik/crossRSVP/issues/14) extends the original Russian-only scope with an English policy and a durable per-book Auto/Russian/English choice. Auto follows the first EPUB language declaration, with unsupported languages leaving words standalone. Both policies limit one companion to seven letters or two companions to five letters each. This amendment preserves the group ownership, rendering, acknowledgement, and navigation contracts below.
+
 The global `Short-word grouping` setting defaults to off and replaces the old Context Line setting without migrating its saved value. A Playback Step, history entry, pacing deadline, and physical presentation acknowledgement operate on the complete Presentation Group. The Resume Anchor and durable checkpoint use the last source word in the most recently acknowledged group; normal restoration continues after that anchor so no displayed companion is repeated.
 
 ## Consequences

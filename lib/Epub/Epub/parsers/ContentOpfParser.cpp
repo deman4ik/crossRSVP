@@ -119,7 +119,12 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   }
 
   if (self->state == IN_METADATA && xmlLocalNameEquals(name, "language")) {
-    self->state = IN_BOOK_LANGUAGE;
+    // EPUB metadata may contain several dc:language elements. The first one
+    // in document order is the publication language used for RSVP Auto mode.
+    if (!self->languageCaptured) {
+      self->languageCaptured = true;
+      self->state = IN_BOOK_LANGUAGE;
+    }
     return;
   }
 
@@ -236,7 +241,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     // EPUB 3: Check for nav document (properties contains "nav")
     if (!properties.empty() && self->tocNavPath.empty()) {
       // Properties is space-separated, check if "nav" is present as a word
-      if (properties == "nav" || properties.find("nav ") == 0 || properties.find(" nav") != std::string::npos) {
+      if (properties == "nav" || properties.starts_with("nav ") || properties.find(" nav") != std::string::npos) {
         self->tocNavPath = href;
         LOG_DBG("COF", "Found EPUB 3 nav document: %s", href.c_str());
       }
@@ -244,7 +249,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
 
     // EPUB 3: Check for cover image (properties contains "cover-image")
     if (!properties.empty() && self->coverItemHref.empty()) {
-      if (properties == "cover-image" || properties.find("cover-image ") == 0 ||
+      if (properties == "cover-image" || properties.starts_with("cover-image ") ||
           properties.find(" cover-image") != std::string::npos) {
         self->coverItemHref = href;
       }
@@ -391,6 +396,14 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
   }
 
   if (self->state == IN_BOOK_LANGUAGE && xmlLocalNameEquals(name, "language")) {
+    while (!self->language.empty() && (self->language.front() == ' ' || self->language.front() == '\t' ||
+                                       self->language.front() == '\r' || self->language.front() == '\n')) {
+      self->language.erase(self->language.begin());
+    }
+    while (!self->language.empty() && (self->language.back() == ' ' || self->language.back() == '\t' ||
+                                       self->language.back() == '\r' || self->language.back() == '\n')) {
+      self->language.pop_back();
+    }
     self->state = IN_METADATA;
     return;
   }

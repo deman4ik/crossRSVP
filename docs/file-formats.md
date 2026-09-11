@@ -6,10 +6,13 @@ All POD fields are written in the ESP32 little-endian representation used by
 
 ## `book.bin`
 
-### Version 10
+### Version 11
 
 `book.bin` stores EPUB metadata plus lookup tables for spine and TOC entries.
 The current firmware writes this version from `BookMetadataCache`.
+Version 11 preserves the binary layout of version 10, but rebuilds old metadata
+so `language` contains only the first `dc:language` value, including an empty or
+unsupported value. Later language elements do not replace it.
 
 ImHex pattern:
 
@@ -18,7 +21,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 10
+#define EXPECTED_VERSION 11
 #define MAX_STRING_LENGTH 65535
 
 struct String {
@@ -380,3 +383,12 @@ if (parsedSize != fileSize) {
     std::warning(std::format("Unparsed data detected: {} bytes remaining at offset 0x{:X}", fileSize - parsedSize, parsedSize));
 }
 ```
+
+## `grouping-language.bin`
+
+A durable per-book preference, preserved alongside progress and RSVP checkpoints
+when derived EPUB caches are rebuilt. The six bytes are ASCII `CPGL`, format
+version `1`, and choice `0` (Auto), `1` (Russian), or `2` (English). Missing or
+invalid data defaults to Auto. A changed choice is written through `.tmp` and
+`.bak` promotion; a leftover valid backup can recover an interrupted promotion.
+The file is read at session entry/settings return, never once per frame.

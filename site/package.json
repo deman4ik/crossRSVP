@@ -1,0 +1,13 @@
+{
+  "name": "crossrsvp-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:browser": "node test/browser.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

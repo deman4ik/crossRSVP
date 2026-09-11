@@ -56,6 +56,14 @@ _Avoid_: Stop word, insignificant word
 A punctuation pause or document transition across which a Presentation Group cannot extend.
 _Avoid_: Context boundary, page boundary
 
+**Grouping Language**:
+The language policy used for Companion Eligibility throughout one book. The reader can choose Russian or English, or use Auto to follow the book's primary language; an unsupported language leaves words standalone.
+_Avoid_: Interface language, detected script
+
+**Primary Language**:
+The first language declared by the EPUB, independently of the interface language or languages used by individual passages.
+_Avoid_: First supported language, concatenated languages
+
 **Playback Step**:
 One automatic or manual advance from the current Presentation Group to the next Presentation Group.
 _Avoid_: Word step, token step

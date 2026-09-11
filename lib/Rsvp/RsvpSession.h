@@ -1,5 +1,6 @@
 #pragma once
 
+#include "RsvpCompanionPolicy.h"
 #include "RsvpLexicalCore.h"
 #include "RsvpTypes.h"
 
@@ -7,13 +8,14 @@ namespace rsvp {
 
 class RsvpSession final {
  public:
-  explicit RsvpSession(RsvpSource& source, ResumeAnchor initialAnchor = {}, RsvpPacingConfig pacing = {},
+  explicit RsvpSession(RsvpSource& source, ResumeAnchor initialAnchor = {}, const RsvpPacingConfig& pacing = {},
                        bool groupingEnabled = false, PresentationGroupFitCallback fitCallback = nullptr,
-                       void* fitContext = nullptr);
+                       void* fitContext = nullptr, GroupingLanguage groupingLanguage = GroupingLanguage::Russian);
   Decision step(const Input& input);
   // Applies settings without rebuilding the source or replacing the displayed group.
   // Only a paused session may be reconfigured; the new grouping policy starts with the next group.
-  Decision configureWhilePaused(RsvpPacingConfig newPacing, bool newGroupingEnabled);
+  Decision configureWhilePaused(const RsvpPacingConfig& newPacing, bool newGroupingEnabled);
+  Decision configureWhilePaused(const RsvpPacingConfig& newPacing, bool newGroupingEnabled, GroupingLanguage language);
   ResumeAnchor currentAnchor() const { return presentedAnchor; }
   uint32_t currentTokenHash() const { return presentedTokenHash32; }
   uint16_t currentTokenLength() const { return presentedTokenLength; }
@@ -58,6 +60,7 @@ class RsvpSession final {
   ResumeAnchor initialAnchor;
   RsvpPacingConfig pacing;
   bool groupingEnabled = false;
+  GroupingLanguage groupingLanguage = GroupingLanguage::Russian;
   PresentationGroupFitCallback fitCallback = nullptr;
   void* fitContext = nullptr;
   // Three source words plus one lookahead. The displayed group stays in the

@@ -133,8 +133,11 @@ bool RsvpReaderActivity::loadBook() {
   pacing.sentencePausePercent = static_cast<uint16_t>(SETTINGS.rsvpSentencePauseTenths) * 10;
   pacing.paragraphPausePercent = static_cast<uint16_t>(SETTINGS.rsvpParagraphPauseTenths) * 10;
   const bool groupingEnabled = prepareGroupingFonts();
+  const auto storedGroupingChoice =
+      static_cast<rsvp::GroupingLanguageChoice>(static_cast<uint8_t>(epub->getGroupingLanguagePreference().load()));
+  const auto groupingLanguage = rsvp::resolveGroupingLanguage(storedGroupingChoice, epub->getLanguage());
   session = makeUniqueNoThrow<rsvp::RsvpSession>(*source, initialAnchor, pacing, groupingEnabled,
-                                                 &RsvpReaderActivity::fitPresentationGroup, this);
+                                                 &RsvpReaderActivity::fitPresentationGroup, this, groupingLanguage);
   if (!session) {
     LOG_ERR("RSVP", "Failed to allocate session");
     return enterFatalFallback(rsvp::Error::SourceOpen);
@@ -224,7 +227,12 @@ void RsvpReaderActivity::applySettings() {
   pacing.clausePausePercent = static_cast<uint16_t>(SETTINGS.rsvpClausePauseTenths) * 10;
   pacing.sentencePausePercent = static_cast<uint16_t>(SETTINGS.rsvpSentencePauseTenths) * 10;
   pacing.paragraphPausePercent = static_cast<uint16_t>(SETTINGS.rsvpParagraphPauseTenths) * 10;
-  if (session) applyDecision(session->configureWhilePaused(pacing, prepareGroupingFonts()));
+  if (session) {
+    const auto storedGroupingChoice =
+        static_cast<rsvp::GroupingLanguageChoice>(static_cast<uint8_t>(epub->getGroupingLanguagePreference().load()));
+    const auto groupingLanguage = rsvp::resolveGroupingLanguage(storedGroupingChoice, epub->getLanguage());
+    applyDecision(session->configureWhilePaused(pacing, prepareGroupingFonts(), groupingLanguage));
+  }
   if (controlPanel) controlPanel->begin();
   currentDecision.render = true;
   requestUpdate();
@@ -286,7 +294,7 @@ void RsvpReaderActivity::loop() {
           break;
         case RsvpControlPanelUi::Event::Settings: {
           SETTINGS.rsvpPaceWpm = currentDecision.paceWpm;
-          auto settings = makeUniqueNoThrow<SettingsActivity>(renderer, mappedInput, true);
+          auto settings = makeUniqueNoThrow<SettingsActivity>(renderer, mappedInput, true, epub->getCachePath());
           if (!settings) {
             LOG_ERR("RSVP", "OOM: settings activity");
             return;

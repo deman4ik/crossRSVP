@@ -57,23 +57,31 @@ uint32_t nextCodepoint(const char* text, const uint16_t length, uint16_t& offset
 
 }  // namespace
 
-RsvpSession::RsvpSession(RsvpSource& source, const ResumeAnchor initialAnchor, const RsvpPacingConfig pacing,
-                         const bool groupingEnabled, PresentationGroupFitCallback fitCallback, void* fitContext)
+RsvpSession::RsvpSession(RsvpSource& source, const ResumeAnchor initialAnchor, const RsvpPacingConfig& pacing,
+                         const bool groupingEnabled, PresentationGroupFitCallback fitCallback, void* fitContext,
+                         const GroupingLanguage groupingLanguage)
     : source(source),
       initialAnchor(initialAnchor),
       pacing(pacing),
       groupingEnabled(groupingEnabled),
+      groupingLanguage(groupingLanguage),
       fitCallback(fitCallback),
       fitContext(fitContext),
       paceWpm(clampPace(pacing.paceWpm, pacing)) {}
 
-Decision RsvpSession::configureWhilePaused(const RsvpPacingConfig newPacing, const bool newGroupingEnabled) {
+Decision RsvpSession::configureWhilePaused(const RsvpPacingConfig& newPacing, const bool newGroupingEnabled) {
+  return configureWhilePaused(newPacing, newGroupingEnabled, groupingLanguage);
+}
+
+Decision RsvpSession::configureWhilePaused(const RsvpPacingConfig& newPacing, const bool newGroupingEnabled,
+                                           const GroupingLanguage newLanguage) {
   Decision decision;
   fillDecision(decision);
   if (state != State::Paused) return decision;
   pacing = newPacing;
   paceWpm = clampPace(newPacing.paceWpm, newPacing);
   groupingEnabled = newGroupingEnabled;
+  groupingLanguage = newLanguage;
   decision = {};
   decision.render = true;
   decision.frame.id = frameId;
@@ -350,7 +358,7 @@ bool RsvpSession::emitNextWord(uint32_t nowMs, Decision& decision) {
   if (!groupingEnabled) return prepareGroup(1, 0, nowMs, decision, true);
 
   uint8_t activeIndex = 0;
-  auto role = classifyRsvpCompanion(events[0].text, events[0].textLength);
+  auto role = classifyRsvpCompanion(events[0].text, events[0].textLength, groupingLanguage);
   if (role == CompanionRole::Backward) return prepareGroup(1, 0, nowMs, decision, true);
   // A forward chain needs a lexical anchor inside the three-word budget.
   while (role == CompanionRole::Forward || role == CompanionRole::Bidirectional) {
@@ -359,14 +367,14 @@ bool RsvpSession::emitNextWord(uint32_t nowMs, Decision& decision) {
       return prepareGroup(1, 0, nowMs, decision, true);
     }
     ++activeIndex;
-    role = classifyRsvpCompanion(events[activeIndex].text, events[activeIndex].textLength);
+    role = classifyRsvpCompanion(events[activeIndex].text, events[activeIndex].textLength, groupingLanguage);
     if (role == CompanionRole::Backward) return prepareGroup(1, 0, nowMs, decision, true);
   }
 
   uint8_t count = activeIndex + 1;
   while (count < EVENT_CAPACITY && !boundaryAfter(events[count - 1]) && bufferThrough(count) &&
          events[count].kind == EventKind::Word && !boundaryBefore(events[count])) {
-    role = classifyRsvpCompanion(events[count].text, events[count].textLength);
+    role = classifyRsvpCompanion(events[count].text, events[count].textLength, groupingLanguage);
     if (role != CompanionRole::Backward && role != CompanionRole::Bidirectional) break;
     if (count == 3) {
       // A postfix outranks the farthest prefix. Emit that prefix first.
@@ -377,6 +385,16 @@ bool RsvpSession::emitNextWord(uint32_t nowMs, Decision& decision) {
   }
   if (!prepareRsvpWord(events[activeIndex].text, events[activeIndex].textLength, preparedWord)) {
     return prepareGroup(1, 0, nowMs, decision, true);
+  }
+  const uint8_t companionCount = static_cast<uint8_t>(count - 1);
+  const uint8_t maximumLetters = companionCount == 2 ? 5 : 7;
+  for (uint8_t index = 0; index < count; ++index) {
+    if (index == activeIndex) continue;
+    if (!isRsvpCompanionEligible({events[index].text, events[index].textLength}, groupingLanguage, maximumLetters)) {
+      // Keep the rejected source word at the queue head; it will be shown on
+      // its own and the following words can then form a new bounded group.
+      return prepareGroup(1, 0, nowMs, decision, true);
+    }
   }
   buildGroupView(count, activeIndex);
   if (fitCallback && count > 1) {
@@ -537,7 +555,7 @@ Decision RsvpSession::step(const Input& input) {
         emitNextWord(input.nowMs, decision);
         checkpointAfterPresentation = decision.render;
       } else if (state == State::Paused && !framePresented) {
-        if (chapterPauseShown) chapterPauseShown = false;
+        chapterPauseShown = false;
         chapterPending = false;
         emitNextWord(input.nowMs, decision);
         checkpointAfterPresentation = decision.render;

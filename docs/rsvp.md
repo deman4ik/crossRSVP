@@ -1,4 +1,4 @@
-# CrossRSVP v0.6.0 guide
+# CrossRSVP v0.7.0 guide
 
 CrossRSVP is an explicit EPUB reading mode. A book opens in Paged Mode first;
 RSVP starts paused at the current reading position and shares its checkpoint
@@ -41,10 +41,31 @@ reading position. The X4 Pro release profile has GT911 touch, capacitive Home,
 warm/cool frontlight, PSRAM, native SDMMC, and USB MSC support; physical
 operation of those paths remains part of the pending v0.6.0 audit.
 
+## Grouping language for the open book
+
+Open **Grouping language** in the book's reading menu. On X4 Pro it is also
+available through the paused RSVP panel's **Settings → Reader** page. Choose
+**Auto**, **Russian**, or **English**; the choice is saved independently for each
+book and survives rebuilding derived caches. The global short-word grouping
+switch must still be enabled.
+
+Auto uses the first EPUB language element, independently of menu language.
+Supported English/Russian tag variants select the corresponding policy; missing,
+malformed, or unsupported primary languages leave words standalone. Later language
+elements do not replace an empty/unsupported first value. Manual choices apply to
+the entire book.
+
+One companion is limited to seven letters; two companions to five letters each.
+The active word keeps its existing fit rules. English adds 48 exact forward forms
+and words with an internal straight/curly apostrophe: `John's BOOK`, `I don't KNOW`.
+The Russian inventory is unchanged. Rejected candidates remain in source order.
+Changing language while paused retains the current group and acknowledged history;
+future groups use the new choice.
+
 ## Release artifacts and qualification
 
-Use only the image matching the reader model. Firmware paths are `artifacts/crossrsvp-<device>-v0.6.0/firmware`; simulator
-evidence is in `artifacts/crossrsvp-checks-20260911`. The consolidated firmware
-bundle is `artifacts/crossrsvp-v0.6.0`. Compare each image with
+Use only the image matching the reader model. Firmware paths are `artifacts/crossrsvp-<device>-v0.7.0/firmware`; simulator
+evidence is in `artifacts/issues-13-14`. The consolidated firmware
+packages are local build outputs; see [v0.7.0 validation](rsvp-v0.7.0-validation.md). Compare each image with
 its generated `SHA256SUMS` file. Host and simulator results cannot establish
 panel, touch, battery, SDMMC, USB MSC, sleep, or heap behavior on hardware.

@@ -26,6 +26,7 @@
 #include "StatusBarSettingsActivity.h"
 #include "TextSettingsActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
+#include "activities/reader/BookGroupingLanguageSelectActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
@@ -34,8 +35,11 @@
 
 namespace fui = freeink::ui;
 
-SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const bool returnToCaller)
-    : UiTabListActivity("Settings", renderer, mappedInput), returnToCaller(returnToCaller) {}
+SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const bool returnToCaller,
+                                   std::string bookCachePath)
+    : UiTabListActivity("Settings", renderer, mappedInput),
+      returnToCaller(returnToCaller),
+      bookCachePath(std::move(bookCachePath)) {}
 
 bool SettingsActivity::handleHomeGesture() {
   if (!returnToCaller) return false;
@@ -104,6 +108,10 @@ void SettingsActivity::rebuildSettingsLists() {
                         SettingInfo::Action(StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings));
   readerSettings.insert(readerSettings.begin() + 1,
                         SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
+  if (!bookCachePath.empty()) {
+    readerSettings.insert(readerSettings.begin() + 2,
+                          SettingInfo::Action(StrId::STR_RSVP_GROUPING_LANGUAGE, SettingAction::GroupingLanguage));
+  }
   readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
 
   // Update currentSettings pointer and count for the active category
@@ -388,6 +396,16 @@ void SettingsActivity::toggleCurrentSetting() {
           LOG_ERR("SETTINGS", "OOM: KeyboardLayoutsActivity");
         }
         break;
+      case SettingAction::GroupingLanguage: {
+        auto selector = makeUniqueNoThrow<BookGroupingLanguageSelectActivity>(
+            renderer, mappedInput, bookCachePath, BookGroupingLanguagePreference(bookCachePath).load());
+        if (selector) {
+          startActivityForResult(std::move(selector), [this](const ActivityResult&) {});
+        } else {
+          LOG_ERR("SETTINGS", "OOM: grouping language selector");
+        }
+        break;
+      }
       case SettingAction::None:
         // Do nothing
         break;

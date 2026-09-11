@@ -33,6 +33,7 @@ add_executable(RsvpTest
   RsvpPresentationGroupTest.cpp
   RsvpGroupingSettingsTest.cpp
   RsvpPendingActionsTest.cpp
+  BookGroupingLanguagePreferenceTest.cpp
   EpubCacheUtilsTest.cpp
   ${REPO_ROOT}/lib/Rsvp/EpubVisibleTextSource.cpp
   ${REPO_ROOT}/lib/Rsvp/RsvpModeSwitch.cpp
@@ -49,6 +50,7 @@ add_executable(RsvpTest
   ${REPO_ROOT}/lib/I18n/I18n.cpp
   ${RSVP_I18N_CPP}
   ${REPO_ROOT}/lib/Epub/Epub/htmlEntities.cpp
+  ${REPO_ROOT}/lib/Epub/Epub/BookGroupingLanguagePreference.cpp
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp
 )
 

@@ -1,8 +1,8 @@
 # Language-aware RSVP Presentation Groups with 7/5 limits
 
-Status: accepted specification; implementation has not started as part of this task.
+Status: implemented in v0.7.0; automated qualification and remaining device checks are recorded in [the validation report](../rsvp-v0.7.0-validation.md).
 
-Implementation issue: [#14](https://github.com/deman4ik/crossRSVP/issues/14) — ready-for-agent; no blockers.
+Implementation issue: [#14](https://github.com/deman4ik/crossRSVP/issues/14).
 
 ## Problem Statement
 

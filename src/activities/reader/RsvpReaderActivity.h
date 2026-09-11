@@ -18,7 +18,7 @@
 class RsvpReaderActivity final : public ReaderActivity {
  public:
   explicit RsvpReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath,
-                              bool allowFastInitialRefresh, ReaderLaunchContext launchContext = {})
+                              bool allowFastInitialRefresh, const ReaderLaunchContext& launchContext = {})
       : ReaderActivity("RsvpReader", renderer, mappedInput, std::move(bookPath), allowFastInitialRefresh,
                        launchContext) {}
 

@@ -34,7 +34,7 @@ upstream    https://github.com/crosspoint-reader/crosspoint-reader.git (fetch/pu
 
 ### Git Operation Rules
 
-1. Integration branches and PR comparisons target `develop`, not `master` or the remote's symbolic HEAD.
+1. Integration branches and PR comparisons target `master`. Fetch upstream `develop` explicitly when integrating CrossPoint Reader changes.
 2. Never push to any remote or open/close a PR without explicit user approval. Complete local work and any requested local commit, then stop.
 3. If the user explicitly approves a push, inspect remotes again and use `fork` for the feature branch unless the user specifies otherwise.
 4. Never add Claude, Codex, or assistant self-attribution as a commit co-author or generated-by trailer.

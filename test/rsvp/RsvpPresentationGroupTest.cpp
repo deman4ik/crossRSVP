@@ -306,4 +306,114 @@ TEST(RsvpPresentationGroup, DecomposedTokenUsesNormalizedIdentityForCheckpointHa
   EXPECT_EQ(session.currentTokenLength(), static_cast<uint16_t>(std::strlen(normalized)));
 }
 
+TEST(RsvpPresentationGroup, EnglishCompanionsAttachForwardAndPreserveOriginalText) {
+  Source source({word("with", 0), word("the", 5), word("house", 9), marker(rsvp::EventKind::EndOfBook, 15)});
+  rsvp::RsvpSession session(source, {}, {}, true, acceptAll, nullptr, rsvp::GroupingLanguage::English);
+  const auto frame = session.step({});
+  EXPECT_EQ(groupText(frame), (std::vector<std::string>{"with", "the", "house"}));
+  EXPECT_EQ(frame.frame.presentationGroup->activeIndex, 2);
+}
+
+TEST(RsvpPresentationGroup, EnglishSevenLetterCompanionCannotJoinPair) {
+  Source source({word("without", 0), word("a", 8), word("coat", 10), marker(rsvp::EventKind::EndOfBook, 15)});
+  rsvp::RsvpSession session(source, {}, {}, true, acceptAll, nullptr, rsvp::GroupingLanguage::English);
+  const auto first = session.step({});
+  EXPECT_EQ(groupText(first), (std::vector<std::string>{"without"}));
+  acknowledge(session, first);
+  const auto second = session.step({.action = rsvp::Action::StepForward});
+  EXPECT_EQ(groupText(second), (std::vector<std::string>{"a", "coat"}));
+  EXPECT_EQ(second.frame.presentationGroup->activeIndex, 1);
+}
+
+TEST(RsvpPresentationGroup, PausedLanguageReconfigurePreservesAnchorAndAppliesToFutureGroups) {
+  Source source(
+      {word("with", 0), word("house", 5), word("и", 11), word("дом", 13), marker(rsvp::EventKind::EndOfBook, 17)});
+  rsvp::RsvpSession session(source, {}, {}, true, acceptAll, nullptr, rsvp::GroupingLanguage::English);
+  const auto first = session.step({});
+  ASSERT_EQ(groupText(first), (std::vector<std::string>{"with", "house"}));
+  acknowledge(session, first);
+  const auto anchor = session.currentAnchor();
+  const auto configured = session.configureWhilePaused({}, true, rsvp::GroupingLanguage::Russian);
+  ASSERT_TRUE(configured.render);
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, anchor.visibleTextOffset);
+  acknowledge(session, configured);
+  const auto next = session.step({.action = rsvp::Action::StepForward});
+  ASSERT_TRUE(next.render);
+  EXPECT_EQ(groupText(next), (std::vector<std::string>{"и", "дом"}));
+  EXPECT_EQ(next.frame.presentationGroup->activeIndex, 1);
+}
+
+TEST(RsvpPresentationGroup, WidthFallbackKeepsRejectedCompanionsInSourceOrder) {
+  Source source({word("with", 0), word("the", 5), word("house", 9), marker(rsvp::EventKind::EndOfBook, 15)});
+  rsvp::RsvpSession session(source, {}, {}, true, activeOnly, nullptr, rsvp::GroupingLanguage::English);
+  const auto first = session.step({});
+  EXPECT_EQ(groupText(first), (std::vector<std::string>{"with"}));
+  acknowledge(session, first);
+  const auto second = session.step({.action = rsvp::Action::StepForward});
+  EXPECT_EQ(groupText(second), (std::vector<std::string>{"the"}));
+}
+
+struct GroupCase {
+  const char* name;
+  rsvp::GroupingLanguage language;
+  std::vector<const char*> words;
+  std::vector<std::vector<std::string>> expected;
+};
+
+std::vector<std::vector<std::string>> playGroups(const GroupCase& testCase) {
+  std::vector<rsvp::DocumentEvent> events;
+  uint32_t offset = 0;
+  for (const char* text : testCase.words) {
+    events.push_back(word(text, offset));
+    offset += static_cast<uint32_t>(std::strlen(text) + 1);
+  }
+  events.push_back(marker(rsvp::EventKind::EndOfBook, offset));
+  Source source(std::move(events));
+  rsvp::RsvpSession session(source, {}, {}, true, acceptAll, nullptr, testCase.language);
+  std::vector<std::vector<std::string>> result;
+  auto frame = session.step({});
+  while (frame.render) {
+    result.push_back(groupText(frame));
+    acknowledge(session, frame);
+    frame = session.step({.action = rsvp::Action::StepForward});
+  }
+  return result;
+}
+
+TEST(RsvpPresentationGroup, ObservableLanguageExamplesPreserveEverySourceWord) {
+  const GroupCase cases[] = {
+      {"with the house", rsvp::GroupingLanguage::English, {"with", "the", "house"}, {{"with", "the", "house"}}},
+      {"in their house", rsvp::GroupingLanguage::English, {"in", "their", "house"}, {{"in", "their", "house"}}},
+      {"during winter", rsvp::GroupingLanguage::English, {"during", "winter"}, {{"during", "winter"}}},
+      {"during the night", rsvp::GroupingLanguage::English, {"during", "the", "night"}, {{"during"}, {"the", "night"}}},
+      {"without help", rsvp::GroupingLanguage::English, {"without", "help"}, {{"without", "help"}}},
+      {"without a coat", rsvp::GroupingLanguage::English, {"without", "a", "coat"}, {{"without"}, {"a", "coat"}}},
+      {"he is ready", rsvp::GroupingLanguage::English, {"he", "is", "ready"}, {{"he", "is"}, {"ready"}}},
+      {"I'm ready", rsvp::GroupingLanguage::English, {"I'm", "ready"}, {{"I'm", "ready"}}},
+      {"we're not ready", rsvp::GroupingLanguage::English, {"we're", "not", "ready"}, {{"we're", "not", "ready"}}},
+      {"I don't know", rsvp::GroupingLanguage::English, {"I", "don't", "know"}, {{"I", "don't", "know"}}},
+      {"they're not ready",
+       rsvp::GroupingLanguage::English,
+       {"they're", "not", "ready"},
+       {{"they're"}, {"not", "ready"}}},
+      {"wouldn't go", rsvp::GroupingLanguage::English, {"wouldn't", "go"}, {{"wouldn't", "go"}}},
+      {"shouldn't go", rsvp::GroupingLanguage::English, {"shouldn't", "go"}, {{"shouldn't"}, {"go"}}},
+      {"John's book", rsvp::GroupingLanguage::English, {"John's", "book"}, {{"John's", "book"}}},
+      {"o'clock work", rsvp::GroupingLanguage::English, {"o'clock", "work"}, {{"o'clock", "work"}}},
+      {"'house' and dogs'",
+       rsvp::GroupingLanguage::English,
+       {"'house'", "and", "dogs'"},
+       {{"'house'"}, {"and", "dogs'"}}},
+      {"'the'", rsvp::GroupingLanguage::English, {"'the'"}, {{"'the'"}}},
+      {"и после дождя", rsvp::GroupingLanguage::Russian, {"и", "после", "дождя"}, {{"и", "после", "дождя"}}},
+      {"после дождя же", rsvp::GroupingLanguage::Russian, {"после", "дождя", "же"}, {{"после", "дождя", "же"}}},
+      {"и против ветра", rsvp::GroupingLanguage::Russian, {"и", "против", "ветра"}, {{"и"}, {"против", "ветра"}}},
+      {"против ветра же", rsvp::GroupingLanguage::Russian, {"против", "ветра", "же"}, {{"против"}, {"ветра", "же"}}},
+      {"не путешествовал", rsvp::GroupingLanguage::Russian, {"не", "путешествовал"}, {{"не", "путешествовал"}}},
+      {"из-за дождя", rsvp::GroupingLanguage::Russian, {"из-за", "дождя"}, {{"из-за", "дождя"}}},
+      {"дом лес", rsvp::GroupingLanguage::Russian, {"дом", "лес"}, {{"дом"}, {"лес"}}},
+  };
+  for (const auto& testCase : cases) EXPECT_EQ(playGroups(testCase), testCase.expected) << testCase.name;
+}
+
 }  // namespace

@@ -23,6 +23,10 @@ struct MenuResult {
   uint8_t pageTurnOption = 0;
 };
 
+struct BookGroupingLanguageResult {
+  uint8_t choice = 0;
+};
+
 struct ChapterResult {
   int spineIndex = 0;
   std::string anchor;
@@ -67,9 +71,9 @@ struct FilePathResult {
   std::string path;
 };
 
-using ResultVariant =
-    std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, IntervalResult,
-                 PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult, FilePathResult>;
+using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
+                                   IntervalResult, PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult,
+                                   FilePathResult, BookGroupingLanguageResult>;
 
 struct ActivityResult {
   bool isCancelled = false;

@@ -10,7 +10,8 @@ namespace {
 
 bool isDurableReaderState(const char* name) {
   return std::strcmp(name, "progress.bin") == 0 || std::strcmp(name, "rsvp_checkpoint.bin") == 0 ||
-         std::strcmp(name, "rsvp_checkpoint.bin.bak") == 0;
+         std::strcmp(name, "rsvp_checkpoint.bin.bak") == 0 || std::strcmp(name, "grouping-language.bin") == 0 ||
+         std::strcmp(name, "grouping-language.bin.bak") == 0;
 }
 
 }  // namespace

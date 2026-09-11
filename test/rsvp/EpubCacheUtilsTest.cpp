@@ -38,6 +38,8 @@ TEST_F(EpubCacheUtilsTest, DerivedClearPreservesDurableReaderState) {
   writeEntry(cachePath / "progress.bin");
   writeEntry(cachePath / "rsvp_checkpoint.bin");
   writeEntry(cachePath / "rsvp_checkpoint.bin.bak");
+  writeEntry(cachePath / "grouping-language.bin");
+  writeEntry(cachePath / "grouping-language.bin.bak");
   writeEntry(cachePath / "cover.bmp");
   writeEntry(cachePath / "book.bin");
   writeEntry(cachePath / "sections" / "section_0.bin");
@@ -47,6 +49,8 @@ TEST_F(EpubCacheUtilsTest, DerivedClearPreservesDurableReaderState) {
   EXPECT_TRUE(fs::exists(cachePath / "progress.bin"));
   EXPECT_TRUE(fs::exists(cachePath / "rsvp_checkpoint.bin"));
   EXPECT_TRUE(fs::exists(cachePath / "rsvp_checkpoint.bin.bak"));
+  EXPECT_TRUE(fs::exists(cachePath / "grouping-language.bin"));
+  EXPECT_TRUE(fs::exists(cachePath / "grouping-language.bin.bak"));
   EXPECT_FALSE(fs::exists(cachePath / "cover.bmp"));
   EXPECT_FALSE(fs::exists(cachePath / "book.bin"));
   EXPECT_FALSE(fs::exists(cachePath / "sections"));

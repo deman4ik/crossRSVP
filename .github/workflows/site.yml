@@ -1,0 +1,49 @@
+name: CrossRSVP site
+on:
+  push:
+    branches: [master]
+    paths: ['site/**', '.github/workflows/site.yml']
+  release:
+    types: [published]
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - run: npm ci
+        working-directory: site
+      - run: npm test
+        working-directory: site
+      - run: npx playwright install --with-deps chromium
+        working-directory: site
+      - run: npm run test:browser
+        working-directory: site
+      - run: npm run build
+        working-directory: site
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - uses: actions/upload-pages-artifact@v3
+        with: {path: site/dist}
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

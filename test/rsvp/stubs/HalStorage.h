@@ -39,6 +39,7 @@ class HalFile {
   bool open(const char* path, const char* mode) {
     close();
     file_ = std::fopen(path, mode);
+    if (file_) path_ = path;
     return file_ != nullptr;
   }
 
@@ -46,6 +47,7 @@ class HalFile {
     if (!file_) return -1;
     return static_cast<int>(std::fread(buffer, 1, count, file_));
   }
+  size_t fileSize() const { return file_ ? std::filesystem::file_size(path_) : 0; }
 
   size_t write(const void* buffer, const size_t count) { return file_ ? std::fwrite(buffer, 1, count, file_) : 0; }
 
@@ -101,6 +103,11 @@ class HalStorage {
   }
 
   bool exists(const char* path) const { return std::filesystem::exists(path); }
+
+  bool mkdir(const char* path, bool = true) {
+    std::error_code error;
+    return std::filesystem::create_directories(path, error) || std::filesystem::exists(path);
+  }
 
   bool remove(const char* path) {
     for (auto failure = removeFailures_.begin(); failure != removeFailures_.end(); ++failure) {

@@ -2,11 +2,13 @@
 
 #include <Print.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "Epub/BookGroupingLanguagePreference.h"
 #include "Epub/BookMetadataCache.h"
 #include "Epub/css/CssParser.h"
 
@@ -25,6 +27,7 @@ class Epub {
   std::string cachePath;
   // Spine and TOC cache
   std::unique_ptr<BookMetadataCache> bookMetadataCache;
+  BookGroupingLanguagePreference groupingLanguagePreference;
   // CSS parser for styling
   std::unique_ptr<CssParser> cssParser;
   // CSS files
@@ -38,7 +41,9 @@ class Epub {
   CssParser::ParseResult parseCssFiles(CssParser::CacheStatus existingCacheStatus) const;
 
  public:
-  explicit Epub(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)) {
+  explicit Epub(std::string filepath, const std::string& cacheDir)
+      : filepath(std::move(filepath)),
+        groupingLanguagePreference(cacheDir + "/epub_" + std::to_string(std::hash<std::string>{}(this->filepath))) {
     // create a cache key based on the filepath
     cachePath = cacheDir + "/epub_" + std::to_string(std::hash<std::string>{}(this->filepath));
   }
@@ -52,6 +57,8 @@ class Epub {
   const std::string& getTitle() const;
   const std::string& getAuthor() const;
   const std::string& getLanguage() const;
+  BookGroupingLanguagePreference& getGroupingLanguagePreference() { return groupingLanguagePreference; }
+  const BookGroupingLanguagePreference& getGroupingLanguagePreference() const { return groupingLanguagePreference; }
   std::string getCoverBmpPath(bool cropped = false, bool originalThresholds = false) const;
   bool generateCoverBmp(bool cropped = false, bool originalThresholds = false) const;
   std::string getThumbBmpPath() const;

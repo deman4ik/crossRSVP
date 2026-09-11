@@ -25,6 +25,7 @@ enum class SettingAction {
   DownloadFonts,
   TextSettings,
   KeyboardLayouts,
+  GroupingLanguage,
 };
 
 struct SettingInfo {
@@ -204,9 +205,13 @@ class SettingsActivity final : public UiTabListActivity {
   void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);
 
  public:
-  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool returnToCaller = false);
+  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool returnToCaller = false,
+                            std::string bookCachePath = {});
   bool handleHomeGesture() override;
   void onEnter() override;
   void onExit() override;
   void render(RenderLock&&) override;
+
+ private:
+  std::string bookCachePath;
 };

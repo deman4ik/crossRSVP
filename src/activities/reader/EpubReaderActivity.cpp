@@ -22,6 +22,7 @@
 #include <limits>
 
 #include "../../util/BookmarkFile.h"
+#include "BookGroupingLanguageSelectActivity.h"
 #include "BookmarkEntry.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -814,6 +815,22 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
   };
 
   switch (action) {
+    case EpubReaderMenuActivity::MenuAction::AUTO_PAGE_TURN:
+    case EpubReaderMenuActivity::MenuAction::ROTATE_SCREEN:
+      // These toolbar-only actions are handled by activateMoreRow().
+      break;
+    case EpubReaderMenuActivity::MenuAction::GROUPING_LANGUAGE: {
+      const auto current = epub->getGroupingLanguagePreference().load();
+      auto selector =
+          makeUniqueNoThrow<BookGroupingLanguageSelectActivity>(renderer, mappedInput, epub->getCachePath(), current);
+      if (!selector) {
+        LOG_ERR("ERS", "OOM: grouping language selector");
+        openReaderMenu();
+        return;
+      }
+      startActivityForResult(std::move(selector), [this](const ActivityResult&) { openReaderMenu(); });
+      break;
+    }
     case EpubReaderMenuActivity::MenuAction::SELECT_CHAPTER: {
       const int spineIdx = currentSpineIndex;
       // Release the section while the chapter list is up (mirrors the
