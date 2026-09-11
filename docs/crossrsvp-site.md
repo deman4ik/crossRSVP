@@ -44,9 +44,9 @@ third-party endorsement logos, or analytics were copied.
 
 ## Copy and layout
 
-The RU/EN page introduces the firmware before explaining six reading features.
-The demo has its own short instructions; Focus Reading and optional word grouping
-are explained in separate feature cards. Installation has four SD-card update
+The RU/EN page introduces the firmware before explaining five reading features.
+The demo has its own short instructions; optional word grouping is explained in a
+feature card. Installation has four SD-card update
 steps, a separate route for readers still on factory firmware, and the full guide.
 The shared content width and responsive side gutters apply to every section.
 Browser checks verify both languages at 320, 390, 768, 1024 and 1440 px, including

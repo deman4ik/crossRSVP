@@ -55,6 +55,7 @@ h2, .section-heading h2 { font-size: clamp(36px, 4.5vw, 60px); }
 .install-links { border-top: 1px solid var(--line); margin-top: 40px; padding-top: 28px; display: grid; gap: 20px; }
 .install-links > .text-link { justify-self: start; }
 .install-links p a { color: var(--green); text-decoration: underline; text-underline-offset: 3px; }
+.footer-links { grid-column: 1 / -1; justify-content: flex-start; }
 @media(max-width: 1000px) {
   .hero { grid-template-columns: 1fr; }
   .hero-copy { max-width: 680px; }
