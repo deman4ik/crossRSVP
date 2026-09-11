@@ -1154,7 +1154,7 @@ void RsvpReaderActivity::drawStatus() const {
   }
   const char* hint = windowBenchmark.currentPhase() == rsvp::WindowBenchmarkPhase::Idle ? tr(STR_RSVP_WINDOW_START_HINT)
                      : windowReportFailed                                               ? tr(STR_RSVP_WINDOW_CSV_ERROR)
-                     : windowReportSaved ? tr(STR_RSVP_WINDOW_CSV_SAVED)
+                     : windowReportSaved                                                ? tr(STR_RSVP_WINDOW_CSV_SAVED)
                                          : tr(STR_RSVP_WINDOW_ABORT_HINT);
   renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight() - renderer.getLineHeight(SMALL_FONT_ID) - 12,
                             hint);
