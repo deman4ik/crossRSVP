@@ -45,6 +45,9 @@ class Activity {
 
   virtual bool skipLoopDelay() { return false; }
   virtual bool preventAutoSleep() { return false; }
+  // True while the current activity must recover a failed checked display
+  // before global actions may replace it or issue an unchecked display command.
+  virtual bool displayRecoveryPending() const { return false; }
   // Exclusive storage activities suspend global controls and normal activity
   // transitions so no filesystem code races a raw SD-card owner.
   virtual bool requiresExclusiveStorageLoop() const { return false; }

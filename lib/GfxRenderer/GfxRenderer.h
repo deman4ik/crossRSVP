@@ -20,6 +20,7 @@ class FontCacheManager;
 #include <vector>
 
 #include "Bitmap.h"
+#include "DisplayRegion.h"
 
 // Color representation: uint8_t mapped to 4x4 Bayer matrix dithering levels
 // 0 = transparent, 1-16 = gray levels (white to black)
@@ -200,6 +201,20 @@ class GfxRenderer {
   int getScreenHeight() const;
   void tapToLogical(float nx, float ny, int& outX, int& outY) const;
   void displayBuffer(HalDisplay::RefreshMode refreshMode = HalDisplay::FAST_REFRESH) const;
+  using LogicalRegion = display_region::LogicalRegion;
+  using PhysicalRegion = display_region::PhysicalRegion;
+  using DisplayUpdateResult = HalDisplay::DisplayUpdateResult;
+  using WindowBaselineState = HalDisplay::WindowBaselineState;
+  using ControllerDetection = HalDisplay::ControllerDetection;
+  PhysicalRegion physicalDisplayRegion(LogicalRegion logicalRegion) const;
+  DisplayUpdateResult displayBufferChecked(HalDisplay::RefreshMode refreshMode = HalDisplay::FAST_REFRESH) const;
+  DisplayUpdateResult displayWindowChecked(LogicalRegion logicalRegion) const;
+  void setExperimentalWindowUpdates(bool enabled) const;
+  bool supportsExperimentalWindowUpdates() const;
+  void invalidateWindowBaseline() const;
+  WindowBaselineState windowBaselineState() const;
+  bool checkedDisplayReady() const;
+  ControllerDetection controllerDetection() const;
   // One-shot: the next displayBuffer()/displayBufferAsync() call uses `mode`
   // instead of what its caller asked for, then the override clears itself.
   // Lets a closing overlay (the control center's refresh tile) hand a

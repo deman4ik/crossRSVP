@@ -1742,6 +1742,65 @@ void GfxRenderer::displayBuffer(HalDisplay::RefreshMode refreshMode) const {
   display.displayBuffer(refreshMode, fadingFix);
 }
 
+GfxRenderer::PhysicalRegion GfxRenderer::physicalDisplayRegion(const LogicalRegion logicalRegion) const {
+  display_region::Orientation regionOrientation = display_region::Orientation::Portrait;
+  switch (orientation) {
+    case Portrait:
+      break;
+    case LandscapeClockwise:
+      regionOrientation = display_region::Orientation::LandscapeClockwise;
+      break;
+    case PortraitInverted:
+      regionOrientation = display_region::Orientation::PortraitInverted;
+      break;
+    case LandscapeCounterClockwise:
+      regionOrientation = display_region::Orientation::LandscapeCounterClockwise;
+      break;
+  }
+  return display_region::toPhysical(logicalRegion, regionOrientation, panelWidth, panelHeight);
+}
+
+GfxRenderer::DisplayUpdateResult GfxRenderer::displayBufferChecked(HalDisplay::RefreshMode refreshMode) const {
+  if (promotedRefreshPending_) refreshMode = promotedRefresh_;
+  DisplayUpdateResult result = display.displayBufferChecked(refreshMode, fadingFix);
+  if (result.succeeded()) promotedRefreshPending_ = false;
+  return result;
+}
+
+GfxRenderer::DisplayUpdateResult GfxRenderer::displayWindowChecked(const LogicalRegion logicalRegion) const {
+  const PhysicalRegion physical = physicalDisplayRegion(logicalRegion);
+  if (!physical.valid()) {
+    DisplayUpdateResult result;
+    result.requestedKind = HalDisplay::DisplayUpdateKind::Window;
+    result.error = HalDisplay::DisplayUpdateError::InvalidRegion;
+    return result;
+  }
+  if (promotedRefreshPending_) {
+    DisplayUpdateResult result = display.displayBufferChecked(promotedRefresh_, fadingFix);
+    result.requestedKind = HalDisplay::DisplayUpdateKind::Window;
+    if (result.succeeded()) {
+      promotedRefreshPending_ = false;
+      result.fallback = HalDisplay::DisplayUpdateFallback::RefreshPromoted;
+    }
+    return result;
+  }
+  return display.displayWindowChecked(physical.x, physical.y, physical.width, physical.height, fadingFix);
+}
+
+void GfxRenderer::setExperimentalWindowUpdates(const bool enabled) const {
+  display.setExperimentalWindowUpdates(enabled);
+}
+
+bool GfxRenderer::supportsExperimentalWindowUpdates() const { return display.supportsExperimentalWindowUpdates(); }
+
+void GfxRenderer::invalidateWindowBaseline() const { display.invalidateWindowBaseline(); }
+
+GfxRenderer::WindowBaselineState GfxRenderer::windowBaselineState() const { return display.windowBaselineState(); }
+
+bool GfxRenderer::checkedDisplayReady() const { return display.checkedDisplayReady(); }
+
+GfxRenderer::ControllerDetection GfxRenderer::controllerDetection() const { return display.controllerDetection(); }
+
 void GfxRenderer::displayBufferAsync(HalDisplay::RefreshMode refreshMode) const {
   refreshMode = applyPromotedRefresh(refreshMode);
   // The async path has no turn-off-screen hook, which the sunlight fading fix

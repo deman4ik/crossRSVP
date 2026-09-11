@@ -188,6 +188,17 @@ void RsvpSession::fillDecision(Decision& decision) const {
   }
 }
 
+void RsvpSession::fillPendingFrame(Decision& decision) const {
+  decision.render = true;
+  decision.frame.id = frameId;
+  decision.frame.requestedAtMs = frameRequestedAtMs;
+  decision.frame.text = preparedWord.text;
+  decision.frame.textLength = preparedWord.textLength;
+  decision.frame.anchor = requestedAnchor();
+  decision.frame.preparedWord = &preparedWord;
+  decision.frame.presentationGroup = &presentationGroup;
+}
+
 void RsvpSession::setError(Decision& decision, Error error) {
   state = State::Error;
   fallbackReason = PauseReason::Error;
@@ -323,14 +334,9 @@ bool RsvpSession::prepareGroup(uint8_t count, uint8_t activeIndex, uint32_t nowM
   framePresented = true;
   nextDeadlineMs = 0;
   decision = {};
-  decision.render = true;
   decision.frame.id = ++frameId;
-  decision.frame.requestedAtMs = nowMs;
-  decision.frame.text = preparedWord.text;
-  decision.frame.textLength = preparedWord.textLength;
-  decision.frame.anchor = requestedAnchor();
-  decision.frame.preparedWord = &preparedWord;
-  decision.frame.presentationGroup = &presentationGroup;
+  frameRequestedAtMs = nowMs;
+  fillPendingFrame(decision);
   ++framesSinceCleanup;
   if (paragraphPending && pacing.cleanupEveryFrames != 0 && framesSinceCleanup >= pacing.cleanupEveryFrames) {
     decision.cleanupRefresh = true;
@@ -507,6 +513,18 @@ Decision RsvpSession::step(const Input& input) {
         checkpointRequestedThisStep = true;
       }
     }
+    fillDecision(decision);
+    return decision;
+  }
+
+  if (input.action == Action::FramePresentationFailed && framePresented && frameId != 0 &&
+      input.presentedFrameId == frameId && state != State::Error && state != State::Exited &&
+      state != State::Finished) {
+    // Keep the pending frame intact so a later checked full resync can present
+    // and acknowledge the same identity. The last durable anchor is unchanged.
+    state = State::Paused;
+    nextDeadlineMs = 0;
+    fillPendingFrame(decision);
     fillDecision(decision);
     return decision;
   }

@@ -642,6 +642,15 @@ void loop() {
     powerManager.setPowerSaving(false);  // Restore normal CPU frequency on user activity
   }
 
+  if (activityManager.displayRecoveryPending()) {
+    // Only the owning activity may issue the checked full recovery. Global
+    // screenshot, modal, refresh, navigation, and sleep paths remain deferred
+    // so none can send an unchecked display command after a BUSY timeout.
+    activityManager.loop();
+    delay(10);
+    return;
+  }
+
   // Let wake continue as soon as its hold has been verified. The release can
   // arrive after setup, so consume that one input frame rather than making it
   // a page turn, refresh, or other short power-button action.

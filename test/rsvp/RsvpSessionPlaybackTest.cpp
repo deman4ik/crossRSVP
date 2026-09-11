@@ -119,6 +119,70 @@ TEST(RsvpSessionPlayback, RepeatedPresentationAcknowledgementDoesNotMoveTheDeadl
   EXPECT_EQ(repeated.nextDeadlineMs, 600u);
 }
 
+TEST(RsvpSessionPlayback, FailedPresentationPausesWithoutAdvancingDurableAnchorAndCanRetrySameFrame) {
+  VectorSource source({word("one", 10), word("two", 20), marker(rsvp::EventKind::EndOfBook)});
+  rsvp::RsvpSession session(source);
+  const auto first = session.step({.nowMs = 100});
+  ASSERT_EQ(frameText(first), "one");
+  EXPECT_FALSE(session.currentAnchor().valid);
+
+  const auto failed = session.step({.nowMs = 500,
+                                    .action = rsvp::Action::FramePresentationFailed,
+                                    .presentedFrameId = first.frame.id,
+                                    .refreshDurationMs = 400});
+  EXPECT_EQ(failed.state, rsvp::State::Paused);
+  EXPECT_FALSE(failed.presentationAccepted);
+  EXPECT_TRUE(failed.render);
+  EXPECT_EQ(failed.frame.id, first.frame.id);
+  EXPECT_EQ(failed.frame.requestedAtMs, first.frame.requestedAtMs);
+  ASSERT_NE(failed.frame.preparedWord, nullptr);
+  ASSERT_NE(failed.frame.presentationGroup, nullptr);
+  EXPECT_EQ(frameText(failed), "one");
+  EXPECT_FALSE(session.currentAnchor().valid);
+  EXPECT_EQ(session.requestedAnchor().visibleTextOffset, 10u);
+
+  const auto recovered = session.step({.nowMs = 900,
+                                       .action = rsvp::Action::FramePresented,
+                                       .presentedFrameId = failed.frame.id,
+                                       .refreshDurationMs = 400});
+  EXPECT_TRUE(recovered.presentationAccepted);
+  EXPECT_EQ(recovered.state, rsvp::State::Paused);
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 10u);
+}
+
+TEST(RsvpSessionPlayback, PresentationFailureCannotResurrectExitedSession) {
+  VectorSource source({word("one", 10), marker(rsvp::EventKind::EndOfBook)});
+  rsvp::RsvpSession session(source);
+  const auto first = session.step({.nowMs = 100});
+  ASSERT_TRUE(first.render);
+
+  const auto exited = session.step({.nowMs = 200, .action = rsvp::Action::Exit});
+  ASSERT_EQ(exited.state, rsvp::State::Exited);
+  const auto failed =
+      session.step({.nowMs = 300, .action = rsvp::Action::FramePresentationFailed, .presentedFrameId = first.frame.id});
+  EXPECT_EQ(failed.state, rsvp::State::Exited);
+  EXPECT_FALSE(failed.render);
+}
+
+TEST(RsvpSessionPlayback, StaleOrDuplicatePresentationFailureDoesNotChangeState) {
+  VectorSource source({word("one", 10), word("two", 20), marker(rsvp::EventKind::EndOfBook)});
+  rsvp::RsvpSession session(source);
+  const auto first = session.step({.nowMs = 100});
+
+  const auto stale = session.step(
+      {.nowMs = 200, .action = rsvp::Action::FramePresentationFailed, .presentedFrameId = first.frame.id + 1});
+  EXPECT_EQ(stale.state, rsvp::State::Paused);
+  EXPECT_EQ(session.requestedAnchor().visibleTextOffset, 10u);
+
+  acknowledge(session, first, 300, 200);
+  const auto playing = session.step({.nowMs = 300, .action = rsvp::Action::TogglePlayback});
+  ASSERT_EQ(playing.state, rsvp::State::Playing);
+  const auto duplicate =
+      session.step({.nowMs = 350, .action = rsvp::Action::FramePresentationFailed, .presentedFrameId = first.frame.id});
+  EXPECT_EQ(duplicate.state, rsvp::State::Playing);
+  EXPECT_EQ(session.currentAnchor().visibleTextOffset, 10u);
+}
+
 TEST(RsvpSessionPlayback, LongRefreshConsumesTheWholePunctuationInterval) {
   VectorSource source({word("конец!", 0), word("дальше", 10), marker(rsvp::EventKind::EndOfBook)});
   rsvp::RsvpSession session(source);

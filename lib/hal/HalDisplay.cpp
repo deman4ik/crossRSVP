@@ -1,5 +1,6 @@
 #include <HalDisplay.h>
 #include <HalGPIO.h>
+#include <XteinkDetect.h>
 
 // Global HalDisplay instance
 HalDisplay display;
@@ -11,6 +12,23 @@ HalDisplay::HalDisplay() : einkDisplay(EPD_SCLK, EPD_MOSI, EPD_CS, EPD_DC, EPD_R
 HalDisplay::~HalDisplay() {}
 
 HalDisplay::Controller HalDisplay::getController() const { return BoardConfig::ACTIVE.displayController; }
+
+HalDisplay::ControllerDetection HalDisplay::controllerDetection() const {
+  ControllerDetection detection{getController(), ControllerConfidence::Inconclusive, gpio.deviceIsX3()};
+  if (!detection.isX3) return detection;
+
+  const freeink::XteinkDisplayProbeDiag& probe = freeink::getXteinkDisplayProbeDiag();
+  if (!probe.valid) return detection;
+
+  const auto verdict = static_cast<freeink::DisplayControllerVerdict>(probe.verdict);
+  if (detection.controller == Controller::UC8279 && verdict == freeink::DisplayControllerVerdict::Uc81xxConfirmed) {
+    detection.confidence = ControllerConfidence::Confirmed;
+  } else if (detection.controller == Controller::UC8253 &&
+             verdict == freeink::DisplayControllerVerdict::PrimaryAssumed) {
+    detection.confidence = ControllerConfidence::Assumed;
+  }
+  return detection;
+}
 
 void HalDisplay::begin(bool seamless) {
   // Set X3-specific panel mode before initializing.
@@ -59,6 +77,48 @@ EInkDisplay::RefreshMode convertRefreshMode(HalDisplay::RefreshMode mode) {
   }
 }
 
+namespace {
+
+HalDisplay::DisplayUpdateKind convertUpdateKind(const freeink::DisplayUpdateKind kind) {
+  switch (kind) {
+    case freeink::DisplayUpdateKind::Full:
+      return HalDisplay::DisplayUpdateKind::Full;
+    case freeink::DisplayUpdateKind::Window:
+      return HalDisplay::DisplayUpdateKind::Window;
+    case freeink::DisplayUpdateKind::None:
+    default:
+      return HalDisplay::DisplayUpdateKind::None;
+  }
+}
+
+HalDisplay::DisplayUpdateFallback convertUpdateFallback(const freeink::DisplayUpdateFallback fallback) {
+  switch (fallback) {
+    case freeink::DisplayUpdateFallback::ExperimentalDisabled:
+      return HalDisplay::DisplayUpdateFallback::ExperimentalDisabled;
+    case freeink::DisplayUpdateFallback::UnsupportedDriver:
+      return HalDisplay::DisplayUpdateFallback::UnsupportedDriver;
+    case freeink::DisplayUpdateFallback::Inverted:
+      return HalDisplay::DisplayUpdateFallback::Inverted;
+    case freeink::DisplayUpdateFallback::BaselineInvalid:
+      return HalDisplay::DisplayUpdateFallback::BaselineInvalid;
+    case freeink::DisplayUpdateFallback::None:
+    default:
+      return HalDisplay::DisplayUpdateFallback::None;
+  }
+}
+
+HalDisplay::DisplayUpdateResult convertUpdateResult(const freeink::DisplayUpdateResult& source) {
+  HalDisplay::DisplayUpdateResult result;
+  result.requestedKind = convertUpdateKind(source.requestedKind);
+  result.actualKind = convertUpdateKind(source.actualKind);
+  result.error = source.error;
+  result.fallback = convertUpdateFallback(source.fallback);
+  result.durationMs = source.durationMs;
+  return result;
+}
+
+}  // namespace
+
 void HalDisplay::displayBuffer(HalDisplay::RefreshMode mode, bool turnOffScreen) {
   if (gpio.deviceIsX3() && mode == RefreshMode::HALF_REFRESH) {
     einkDisplay.requestResync(1);
@@ -66,6 +126,61 @@ void HalDisplay::displayBuffer(HalDisplay::RefreshMode mode, bool turnOffScreen)
 
   einkDisplay.displayBuffer(convertRefreshMode(mode), turnOffScreen);
 }
+
+HalDisplay::DisplayUpdateResult HalDisplay::displayBufferChecked(HalDisplay::RefreshMode mode, bool turnOffScreen) {
+  if (gpio.deviceIsX3() && mode == RefreshMode::HALF_REFRESH) {
+    einkDisplay.requestResync(1);
+  }
+  DisplayUpdateResult result =
+      convertUpdateResult(einkDisplay.displayBufferChecked(convertRefreshMode(mode), turnOffScreen));
+  if (mode != RefreshMode::FAST_REFRESH) {
+    result.requestedKind = DisplayUpdateKind::Cleanup;
+    if (result.actualKind == DisplayUpdateKind::Full) result.actualKind = DisplayUpdateKind::Cleanup;
+  }
+  return result;
+}
+
+HalDisplay::DisplayUpdateResult HalDisplay::displayWindowChecked(uint16_t x, uint16_t y, uint16_t width,
+                                                                 uint16_t height, bool turnOffScreen) {
+  DisplayUpdateResult result =
+      convertUpdateResult(einkDisplay.displayWindowChecked(x, y, width, height, turnOffScreen));
+  if (result.fallback == DisplayUpdateFallback::ExperimentalDisabled &&
+      windowGateFallback != DisplayUpdateFallback::None) {
+    result.fallback = windowGateFallback;
+  }
+  return result;
+}
+
+void HalDisplay::setExperimentalWindowUpdates(bool enabled) {
+  bool eligible = false;
+  windowGateFallback = DisplayUpdateFallback::ExperimentalDisabled;
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  const ControllerDetection detection = controllerDetection();
+  if (enabled && !detection.isX3) {
+    windowGateFallback = DisplayUpdateFallback::UnsupportedModel;
+  } else if (enabled && detection.controller != Controller::UC8253) {
+    windowGateFallback = DisplayUpdateFallback::UnsupportedController;
+  } else if (enabled && detection.confidence == ControllerConfidence::Inconclusive) {
+    windowGateFallback = DisplayUpdateFallback::InconclusiveController;
+  } else if (enabled) {
+    eligible = true;
+    windowGateFallback = DisplayUpdateFallback::None;
+  }
+#else
+  (void)enabled;
+#endif
+  einkDisplay.setExperimentalWindowUpdates(eligible);
+}
+
+bool HalDisplay::supportsExperimentalWindowUpdates() const {
+  return windowGateFallback == DisplayUpdateFallback::None && einkDisplay.supportsExperimentalWindowUpdates();
+}
+
+void HalDisplay::invalidateWindowBaseline() { einkDisplay.invalidateWindowBaseline(); }
+
+HalDisplay::WindowBaselineState HalDisplay::windowBaselineState() const { return einkDisplay.windowBaselineState(); }
+
+bool HalDisplay::checkedDisplayReady() const { return einkDisplay.checkedDisplayReady(); }
 
 void HalDisplay::displayBufferAsync(HalDisplay::RefreshMode mode) {
   if (gpio.deviceIsX3() && mode == RefreshMode::HALF_REFRESH) {

@@ -1,12 +1,47 @@
 #pragma once
 #include <Arduino.h>
 #include <BoardConfig.h>
+#include <DisplayUpdateResult.h>
 #include <EInkDisplay.h>
 
 class HalDisplay {
  public:
   using Controller = BoardConfig::DisplayController;
   Controller getController() const;
+
+  enum class ControllerConfidence : uint8_t { Confirmed, Assumed, Inconclusive };
+  struct ControllerDetection {
+    Controller controller;
+    ControllerConfidence confidence;
+    bool isX3;
+  };
+  ControllerDetection controllerDetection() const;
+
+  enum class DisplayUpdateKind : uint8_t { None, Full, Window, Cleanup };
+  using DisplayUpdateError = freeink::DisplayUpdateError;
+  enum class DisplayUpdateFallback : uint8_t {
+    None,
+    ExperimentalDisabled,
+    UnsupportedModel,
+    UnsupportedController,
+    InconclusiveController,
+    UnsupportedDriver,
+    Inverted,
+    BaselineInvalid,
+    RefreshPromoted
+  };
+  struct DisplayUpdateResult {
+    DisplayUpdateKind requestedKind = DisplayUpdateKind::None;
+    DisplayUpdateKind actualKind = DisplayUpdateKind::None;
+    DisplayUpdateError error = DisplayUpdateError::None;
+    DisplayUpdateFallback fallback = DisplayUpdateFallback::None;
+    uint32_t durationMs = 0;
+
+    constexpr bool succeeded() const {
+      return error == DisplayUpdateError::None && actualKind != DisplayUpdateKind::None;
+    }
+  };
+  using WindowBaselineState = freeink::WindowBaselineState;
 
   using GrayscaleMode = freeink::GrayscaleMode;
   using GrayscaleCapabilities = freeink::GrayscaleCapabilities;
@@ -50,6 +85,18 @@ class HalDisplay {
                             bool fromProgmem = false) const;
 
   void displayBuffer(RefreshMode mode = RefreshMode::FAST_REFRESH, bool turnOffScreen = false);
+  // Checked presentation keeps the actual update kind and failure visible to
+  // callers. Window coordinates are validated physical framebuffer pixels.
+  DisplayUpdateResult displayBufferChecked(RefreshMode mode = RefreshMode::FAST_REFRESH, bool turnOffScreen = false);
+  DisplayUpdateResult displayWindowChecked(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
+                                           bool turnOffScreen = false);
+  // The experimental gate can only open in the dedicated diagnostic build on
+  // an X3 whose active driver is UC8253 and whose probe was not inconclusive.
+  void setExperimentalWindowUpdates(bool enabled);
+  bool supportsExperimentalWindowUpdates() const;
+  void invalidateWindowBaseline();
+  WindowBaselineState windowBaselineState() const;
+  bool checkedDisplayReady() const;
   // Non-blocking refresh (shadow-free): starts the panel waveform and returns
   // while the panel refreshes on its own. The framebuffer must stay untouched
   // until waitRefreshComplete(), and the caller must rebuild the differential
@@ -128,6 +175,7 @@ class HalDisplay {
 
  private:
   EInkDisplay einkDisplay;
+  DisplayUpdateFallback windowGateFallback = DisplayUpdateFallback::ExperimentalDisabled;
 };
 
 extern HalDisplay display;

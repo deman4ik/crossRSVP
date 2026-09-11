@@ -41,6 +41,7 @@ class RsvpSession final {
   bool boundaryAfter(const DocumentEvent& event);
   void setError(Decision& decision, Error error);
   void fillDecision(Decision& decision) const;
+  void fillPendingFrame(Decision& decision) const;
   uint32_t baseIntervalMs() const;
   uint16_t effectiveMaximumWpm() const;
   static uint32_t tokenHash(const char* text, uint16_t length);
@@ -81,6 +82,7 @@ class RsvpSession final {
   PauseReason fallbackReason = PauseReason::None;
   State state = State::Empty;
   uint32_t frameId = 0;
+  uint32_t frameRequestedAtMs = 0;
   ResumeAnchor presentedAnchor;
   uint32_t presentedTokenHash32 = 0;
   uint16_t presentedTokenLength = 0;

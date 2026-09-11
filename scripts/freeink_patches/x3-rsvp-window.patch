@@ -1,0 +1,1446 @@
+diff --git a/libs/display/FreeInkDisplay/include/DisplayUpdateResult.h b/libs/display/FreeInkDisplay/include/DisplayUpdateResult.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..8477ac67782bbf0388dd44fa8e3803e46e776ae4
+--- /dev/null
++++ b/libs/display/FreeInkDisplay/include/DisplayUpdateResult.h
+@@ -0,0 +1,31 @@
++#pragma once
++
++#include <Arduino.h>
++
++namespace freeink {
++
++enum class DisplayUpdateKind : uint8_t { None, Full, Window };
++
++enum class DisplayUpdateError : uint8_t { None, InvalidRegion, BusyNotReady, BusyTimeout };
++
++enum class DisplayUpdateFallback : uint8_t {
++  None,
++  ExperimentalDisabled,
++  UnsupportedDriver,
++  Inverted,
++  BaselineInvalid,
++};
++
++enum class WindowBaselineState : uint8_t { Invalid, Resyncing, Valid };
++
++struct DisplayUpdateResult {
++  DisplayUpdateKind requestedKind = DisplayUpdateKind::None;
++  DisplayUpdateKind actualKind = DisplayUpdateKind::None;
++  DisplayUpdateError error = DisplayUpdateError::None;
++  DisplayUpdateFallback fallback = DisplayUpdateFallback::None;
++  uint32_t durationMs = 0;
++
++  bool succeeded() const { return error == DisplayUpdateError::None && actualKind != DisplayUpdateKind::None; }
++};
++
++}  // namespace freeink
+diff --git a/libs/display/FreeInkDisplay/include/FreeInkDisplay.h b/libs/display/FreeInkDisplay/include/FreeInkDisplay.h
+index 4cbeaa5cdc713c02eaf4139d35017c5f4a67fbec..9fbb676372fd8303d28a1163859cf0ee9ab74472 100644
+--- a/libs/display/FreeInkDisplay/include/FreeInkDisplay.h
++++ b/libs/display/FreeInkDisplay/include/FreeInkDisplay.h
+@@ -17,6 +17,7 @@
+ #include <SPI.h>
+ 
+ #include "../src/bus/EpdBus.h"
++#include "DisplayUpdateResult.h"
+ #include "GrayscaleCapabilities.h"
+ 
+ namespace freeink {
+@@ -261,6 +262,16 @@ class FreeInkDisplay {
+   // True when the runtime-selected panel is the Xteink X3 (X4 returns false).
+   bool isX3Mode() const { return _panelSel == PanelSel::X3; }
+ 
++  // Checked region updates are experimental and disabled by default. The
++  // caller must opt in explicitly after selecting the controller.
++  void setExperimentalWindowUpdates(bool enabled) { _experimentalWindowUpdates = enabled; }
++  bool supportsExperimentalWindowUpdates() const;
++  bool checkedDisplayReady() const;
++  DisplayUpdateResult displayBufferChecked(RefreshMode mode = FAST_REFRESH, bool turnOffScreen = false);
++  DisplayUpdateResult displayWindowChecked(uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool turnOffScreen = false);
++  void invalidateWindowBaseline();
++  WindowBaselineState windowBaselineState() const;
++
+   // EXPERIMENTAL: Windowed update - display only a rectangular region
+   void displayWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool turnOffScreen = false);
+   void displayGrayBuffer(bool turnOffScreen = false, const unsigned char* lut = nullptr, bool factoryMode = false);
+@@ -472,6 +483,7 @@ class FreeInkDisplay {
+   bool _fastGrayscaleLut = false;
+   bool _inverted = false;
+   bool _inversionDirty = false;
++  bool _experimentalWindowUpdates = false;
+ 
+   // Runtime display geometry (seeded from the driver at begin()).
+   uint16_t displayWidth = DISPLAY_WIDTH;
+diff --git a/libs/display/FreeInkDisplay/src/FreeInkDisplay.cpp b/libs/display/FreeInkDisplay/src/FreeInkDisplay.cpp
+index ee1742df561dca3ddd929c5e911dddcae2689b2b..760dffe94b9e9bf2352a29908e693fad48a0d56f 100644
+--- a/libs/display/FreeInkDisplay/src/FreeInkDisplay.cpp
++++ b/libs/display/FreeInkDisplay/src/FreeInkDisplay.cpp
+@@ -331,7 +331,10 @@ void FreeInkDisplay::setInverted(const bool inverted) {
+   _inversionDirty = true;
+   _shadowValid = false;
+   _redRamSynced = false;
+-  if (_driver) _driver->setBackgroundHint(inverted);
++  if (_driver) {
++    _driver->invalidateWindowBaseline();
++    _driver->setBackgroundHint(inverted);
++  }
+ }
+ 
+ bool FreeInkDisplay::toggleInverted() {
+@@ -392,6 +395,7 @@ uint8_t* FreeInkDisplay::allocFrameBufferStorage() const {
+ 
+ void FreeInkDisplay::releaseBuffers() {
+   cancelGrayscalePass();
++  invalidateWindowBaseline();
+ #ifndef EINK_DISPLAY_SINGLE_BUFFER_MODE
+   // The secondary block is in the host's hands — freeing it here would be a
+   // use-after-free and would orphan _secondaryLent. returnSecondaryBuffer() first.
+@@ -438,6 +442,7 @@ uint8_t* FreeInkDisplay::lendBuildStorage(uint32_t* sizeOut) {
+     return nullptr;
+   }
+   syncPendingAsync();  // a refresh in flight was reading these bytes
++  invalidateWindowBaseline();
+   _buildLent = true;
+   frameBuffer = nullptr;                          // rendering is unavailable while the bytes are lent
+   _shadowValid = false;                           // controller baseline no longer matches
+@@ -581,6 +586,22 @@ GrayscaleCapabilities FreeInkDisplay::grayscaleCapabilities(GrayscaleMode mode)
+ 
+ bool FreeInkDisplay::supportsAsyncGrayscaleBase() const { return grayscaleCapabilities().asyncBase; }
+ 
++bool FreeInkDisplay::supportsExperimentalWindowUpdates() const {
++  return _driver != nullptr && _driver->supportsExperimentalWindowUpdates();
++}
++
++bool FreeInkDisplay::checkedDisplayReady() const {
++  return !_refreshPending && _driver != nullptr && _driver->checkedDisplayReady(_bus);
++}
++
++WindowBaselineState FreeInkDisplay::windowBaselineState() const {
++  return _driver != nullptr ? _driver->windowBaselineState() : WindowBaselineState::Invalid;
++}
++
++void FreeInkDisplay::invalidateWindowBaseline() {
++  if (_driver != nullptr) _driver->invalidateWindowBaseline();
++}
++
+ bool FreeInkDisplay::refreshBusy() {
+   // Does NOT clear the pending state on completion: the driver's post-waveform
+   // work (X3 DTM1 sync) must run through displayFinish(). When this returns
+@@ -625,6 +646,91 @@ void FreeInkDisplay::displayBuffer(RefreshMode mode, bool turnOffScreen) {
+   if (_panelSel != PanelSel::X3) _redRamSynced = true;
+ }
+ 
++DisplayUpdateResult FreeInkDisplay::displayBufferChecked(RefreshMode mode, bool turnOffScreen) {
++  cancelGrayscalePass();
++  _grayPassFailed = false;
++  if (frameBuffer == nullptr) {
++    return {DisplayUpdateKind::Full, DisplayUpdateKind::None, DisplayUpdateError::InvalidRegion,
++            DisplayUpdateFallback::None, 0};
++  }
++  if (!checkedDisplayReady()) {
++    return {DisplayUpdateKind::Full, DisplayUpdateKind::None, DisplayUpdateError::BusyNotReady,
++            DisplayUpdateFallback::None, 0};
++  }
++  if (_inversionDirty && mode == FAST_REFRESH) mode = HALF_REFRESH;
++
++#ifdef EINK_DISPLAY_SINGLE_BUFFER_MODE
++  if (_inverted) invertBytes(frameBuffer, bufferSize);
++  DisplayUpdateResult result = _driver->displayChecked(_bus, frameBuffer, nullptr, toInternal(mode), turnOffScreen);
++  if (_inverted) invertBytes(frameBuffer, bufferSize);
++  _shadowValid = false;
++#else
++  const RefreshMode effectiveMode = resolveReleasedMode(mode);
++  uint8_t* const next = frameBuffer;
++  const uint8_t* const prev = consumePrevFrameFor(effectiveMode);
++  if (_inverted) {
++    invertBytes(next, bufferSize);
++    invertBytes(const_cast<uint8_t*>(prev), bufferSize);
++  }
++  DisplayUpdateResult result = _driver->displayChecked(_bus, next, prev, toInternal(effectiveMode), turnOffScreen);
++  if (_inverted) {
++    invertBytes(next, bufferSize);
++    invertBytes(const_cast<uint8_t*>(prev), bufferSize);
++  }
++  if (result.succeeded()) swapBuffers();
++#endif
++
++  if (result.succeeded()) {
++    _inversionDirty = false;
++    if (_panelSel != PanelSel::X3) _redRamSynced = true;
++  } else {
++    invalidateWindowBaseline();
++  }
++  if (_inverted) invalidateWindowBaseline();
++  return result;
++}
++
++DisplayUpdateResult FreeInkDisplay::displayWindowChecked(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
++                                                         bool turnOffScreen) {
++  if (frameBuffer == nullptr || w == 0 || h == 0 || x % 8 != 0 || w % 8 != 0 || x >= displayWidth ||
++      y >= displayHeight || w > displayWidth - x || h > displayHeight - y) {
++    return {DisplayUpdateKind::Window, DisplayUpdateKind::None, DisplayUpdateError::InvalidRegion,
++            DisplayUpdateFallback::None, 0};
++  }
++  if (!checkedDisplayReady()) {
++    return {DisplayUpdateKind::Window, DisplayUpdateKind::None, DisplayUpdateError::BusyNotReady,
++            DisplayUpdateFallback::None, 0};
++  }
++
++  DisplayUpdateFallback facadeFallback = DisplayUpdateFallback::None;
++  if (_inverted || _inversionDirty)
++    facadeFallback = DisplayUpdateFallback::Inverted;
++  else if (!_experimentalWindowUpdates)
++    facadeFallback = DisplayUpdateFallback::ExperimentalDisabled;
++  else if (!_driver->supportsExperimentalWindowUpdates())
++    facadeFallback = DisplayUpdateFallback::UnsupportedDriver;
++
++  if (facadeFallback != DisplayUpdateFallback::None) {
++    DisplayUpdateResult result = displayBufferChecked(FAST_REFRESH, turnOffScreen);
++    result.requestedKind = DisplayUpdateKind::Window;
++    result.fallback = facadeFallback;
++    return result;
++  }
++
++  cancelGrayscalePass();
++  _grayPassFailed = false;
++#ifdef EINK_DISPLAY_SINGLE_BUFFER_MODE
++  DisplayUpdateResult result = _driver->displayWindowChecked(_bus, frameBuffer, nullptr, x, y, w, h, turnOffScreen);
++  _shadowValid = false;
++#else
++  DisplayUpdateResult result =
++      _driver->displayWindowChecked(_bus, frameBuffer, frameBufferActive, x, y, w, h, turnOffScreen);
++  if (result.succeeded() && result.actualKind == DisplayUpdateKind::Full) swapBuffers();
++#endif
++  if (!result.succeeded()) invalidateWindowBaseline();
++  return result;
++}
++
+ void FreeInkDisplay::displayBufferAsync(RefreshMode mode) { displayAsyncImpl(mode, /*turnOffScreen=*/false); }
+ 
+ void FreeInkDisplay::displayAsyncImpl(RefreshMode mode, bool turnOffScreen, bool noShadow) {
+@@ -858,8 +964,8 @@ void FreeInkDisplay::cancelGrayscalePass() {
+ bool FreeInkDisplay::acceptGrayscaleRows(unsigned plane, const uint8_t* data, uint16_t y, uint16_t rows) {
+   if (_grayscaleMode != GrayscaleMode::Absolute) return true;
+   const auto h = getDisplayHeight();
+-  if (_grayPassFailed || !data || !rows || (plane == 1 && _grayRows[0] == 0) ||
+-      y != _grayRows[plane] || y >= h || rows > h - y) {
++  if (_grayPassFailed || !data || !rows || (plane == 1 && _grayRows[0] == 0) || y != _grayRows[plane] || y >= h ||
++      rows > h - y) {
+     _grayPassFailed = true;
+     return false;
+   }
+@@ -931,9 +1037,7 @@ void FreeInkDisplay::writeGrayscalePlaneStrip(GrayPlane plane, const uint8_t* ro
+                                     rows, yStart, numRows);
+ }
+ 
+-bool FreeInkDisplay::supportsBusyGrayscaleStaging() const {
+-  return grayscaleCapabilities().stagingWhileBusy;
+-}
++bool FreeInkDisplay::supportsBusyGrayscaleStaging() const { return grayscaleCapabilities().stagingWhileBusy; }
+ 
+ void FreeInkDisplay::prepareGrayscaleTarget() {
+   if (grayscaleCapabilities().stagingWhileBusy) {
+@@ -941,13 +1045,9 @@ void FreeInkDisplay::prepareGrayscaleTarget() {
+   }
+ }
+ 
+-bool FreeInkDisplay::supportsStripGrayscale() const {
+-  return grayscaleCapabilities().stripUploads;
+-}
++bool FreeInkDisplay::supportsStripGrayscale() const { return grayscaleCapabilities().stripUploads; }
+ 
+-bool FreeInkDisplay::combinesGrayscaleBase() const {
+-  return grayscaleCapabilities().base == GrayscaleBase::Combined;
+-}
++bool FreeInkDisplay::combinesGrayscaleBase() const { return grayscaleCapabilities().base == GrayscaleBase::Combined; }
+ 
+ void FreeInkDisplay::cleanupGrayscaleBuffers(const uint8_t* bwBuffer) {
+   cancelGrayscalePass();
+diff --git a/libs/display/FreeInkDisplay/src/bus/EpdBus.cpp b/libs/display/FreeInkDisplay/src/bus/EpdBus.cpp
+index 47dad4b8a4893279c463622ff9f69f2e34222223..460180afdfda60037b14fa6193789cd77c341635 100644
+--- a/libs/display/FreeInkDisplay/src/bus/EpdBus.cpp
++++ b/libs/display/FreeInkDisplay/src/bus/EpdBus.cpp
+@@ -115,6 +115,7 @@ void EpdBus::begin(const EpdPins& pins, uint32_t spiHz, BusyPolarity busy, int8_
+ }
+ 
+ void EpdBus::reset(uint16_t extraSettleMs) {
++  if (!writesAllowed()) return;
+   if (BoardConfig::isOnePage()) {
+     // OnePage shares GPIO27 between EPD reset and the SD/MIC power rail.
+     // Pulsing it low after Storage.begin() cuts power to the mounted SD card,
+@@ -145,6 +146,7 @@ void EpdBus::reset(uint16_t extraSettleMs) {
+ }
+ 
+ void EpdBus::cmd(uint8_t c) {
++  if (!writesAllowed()) return;
+   SPI.beginTransaction(_spi);
+   digitalWrite(_pins.dc, LOW);
+   digitalWrite(_pins.cs, LOW);
+@@ -154,6 +156,7 @@ void EpdBus::cmd(uint8_t c) {
+ }
+ 
+ void EpdBus::data(uint8_t d) {
++  if (!writesAllowed()) return;
+   SPI.beginTransaction(_spi);
+   digitalWrite(_pins.dc, HIGH);
+   digitalWrite(_pins.cs, LOW);
+@@ -163,6 +166,7 @@ void EpdBus::data(uint8_t d) {
+ }
+ 
+ void EpdBus::data(const uint8_t* d, uint16_t len) {
++  if (!writesAllowed()) return;
+   SPI.beginTransaction(_spi);
+   digitalWrite(_pins.dc, HIGH);
+   digitalWrite(_pins.cs, LOW);
+@@ -172,6 +176,7 @@ void EpdBus::data(const uint8_t* d, uint16_t len) {
+ }
+ 
+ void EpdBus::cmdData(uint8_t c, const uint8_t* d, uint16_t len) {
++  if (!writesAllowed()) return;
+   SPI.beginTransaction(_spi);
+   digitalWrite(_pins.cs, LOW);
+   digitalWrite(_pins.dc, LOW);
+@@ -190,6 +195,10 @@ void EpdBus::cmdData2(uint8_t c, uint8_t d0, uint8_t d1) {
+ }
+ 
+ void EpdBus::beginTxn() {
++  if (!writesAllowed()) {
++    _checkedTxnSuppressed = true;
++    return;
++  }
+   if (_coCs >= 0) {
+     digitalWrite(_coCs, HIGH);
+   }
+@@ -198,22 +207,29 @@ void EpdBus::beginTxn() {
+ }
+ 
+ void EpdBus::endTxn() {
++  if (_checkedTxnSuppressed) {
++    _checkedTxnSuppressed = false;
++    return;
++  }
+   digitalWrite(_pins.cs, HIGH);
+   SPI.endTransaction();
+ }
+ 
+ void EpdBus::rawCmd(uint8_t c) {
++  if (!writesAllowed()) return;
+   digitalWrite(_pins.dc, LOW);
+   SPI.transfer(c);
+   digitalWrite(_pins.dc, HIGH);
+ }
+ 
+ void EpdBus::rawData(uint8_t d) {
++  if (!writesAllowed()) return;
+   digitalWrite(_pins.dc, HIGH);
+   SPI.transfer(d);
+ }
+ 
+ void EpdBus::rawWriteBytes(const uint8_t* d, uint16_t len) {
++  if (!writesAllowed()) return;
+   digitalWrite(_pins.dc, HIGH);
+   SPI.writeBytes(d, len);
+ }
+@@ -239,7 +255,10 @@ void EpdBus::waitBusy(BusyPolarity p, const char* tag) {
+           _busyWaitBeginHook();
+         }
+       }
+-      if (millis() - start > 30000) break;
++      if (millis() - start > 30000) {
++        recordWaitFailure();
++        break;
++      }
+     }
+   } else if (p == BusyPolarity::ActiveLow) {
+     bool busy = digitalRead(_pins.busy) == LOW;
+@@ -262,7 +281,10 @@ void EpdBus::waitBusy(BusyPolarity p, const char* tag) {
+             _busyWaitBeginHook();
+           }
+         }
+-        if (millis() - start > 30000) break;
++        if (millis() - start > 30000) {
++          recordWaitFailure();
++          break;
++        }
+       } while (digitalRead(_pins.busy) == LOW);
+     }
+   } else if (p == BusyPolarity::UcIdleHigh) {
+@@ -298,19 +320,102 @@ void EpdBus::waitBusy(BusyPolarity p, const char* tag) {
+             _busyWaitBeginHook();
+           }
+         }
+-        if (millis() - start > 30000) break;
++        if (millis() - start > 30000) {
++          recordWaitFailure();
++          break;
++        }
+       }
+     }
+   }
+ 
+   if (hookFired && _busyWaitEndHook != nullptr) _busyWaitEndHook();
+-  if (p == BusyPolarity::X3TwoPhase && !x3SawLow) return;
++  if (p == BusyPolarity::X3TwoPhase && !x3SawLow) {
++    recordWaitFailure();
++    return;
++  }
+ 
+   if (tag && Serial) {
+     Serial.printf("[%lu]   Wait complete: %s (%lu ms)\n", millis(), tag, millis() - start);
+   }
+ }
+ 
++BusyWaitStatus EpdBus::waitBusyChecked(const char* tag) { return waitBusyChecked(_busy, tag); }
++
++BusyWaitStatus EpdBus::waitBusyChecked(BusyPolarity p, const char* tag) {
++  const unsigned long start = millis();
++  bool longWait = false;
++  bool hookFired = false;
++  bool timedOut = false;
++
++  const auto idle = [&](uint8_t busyLevel, uint8_t fallbackDelayMs) {
++    busyIdle(longWait, busyLevel, fallbackDelayMs);
++    if (!longWait && millis() - start > BUSY_WAIT_HOOK_THRESHOLD_MS) {
++      longWait = true;
++      if (_busyWaitBeginHook != nullptr) {
++        hookFired = true;
++        _busyWaitBeginHook();
++      }
++    }
++  };
++
++  if (p == BusyPolarity::ActiveHigh) {
++    while (digitalRead(_pins.busy) == HIGH) {
++      idle(HIGH, 1);
++      if (millis() - start > 30000) {
++        timedOut = true;
++        break;
++      }
++    }
++  } else if (p == BusyPolarity::ActiveLow) {
++    bool busy = digitalRead(_pins.busy) == LOW;
++    if (!busy) {
++      while (millis() - start < 100) {
++        if (digitalRead(_pins.busy) == LOW) {
++          busy = true;
++          break;
++        }
++        delay(1);
++      }
++    }
++    while (busy && digitalRead(_pins.busy) == LOW) {
++      idle(LOW, 10);
++      if (millis() - start > 30000) {
++        timedOut = true;
++        break;
++      }
++    }
++  } else if (p == BusyPolarity::UcIdleHigh) {
++    delay(1);
++    while (digitalRead(_pins.busy) == LOW) {
++      idle(LOW, 1);
++      if (millis() - start > 30000) {
++        timedOut = true;
++        break;
++      }
++    }
++  } else {
++    while (digitalRead(_pins.busy) == HIGH && millis() - start <= 1000) delay(1);
++    if (digitalRead(_pins.busy) != LOW) {
++      timedOut = true;
++    } else {
++      while (digitalRead(_pins.busy) == LOW) {
++        idle(LOW, 1);
++        if (millis() - start > 30000) {
++          timedOut = true;
++          break;
++        }
++      }
++    }
++  }
++
++  if (hookFired && _busyWaitEndHook != nullptr) _busyWaitEndHook();
++  if (tag && Serial) {
++    Serial.printf("[%lu]   Wait %s: %s (%lu ms)\n", millis(), timedOut ? "timeout" : "complete", tag, millis() - start);
++  }
++  if (timedOut) recordWaitFailure();
++  return timedOut ? BusyWaitStatus::TimedOut : BusyWaitStatus::Ready;
++}
++
+ void EpdBus::waitRefreshComplete(const char* tag) {
+   // The X4 Pro UC production wait is level-based, not edge-qualified. Keep the
+   // same one-tick/idle-HIGH rule for refresh completion so a missed assertion
+@@ -383,7 +488,10 @@ void EpdBus::waitRefreshComplete(const char* tag) {
+   const bool hook = (_busyWaitBeginHook != nullptr);
+   if (hook) _busyWaitBeginHook();
+   while (digitalRead(_pins.busy) != doneLevel) {
+-    if (xSemaphoreTake(s_epdRefreshDone, pdMS_TO_TICKS(30000)) != pdTRUE) break;
++    if (xSemaphoreTake(s_epdRefreshDone, pdMS_TO_TICKS(30000)) != pdTRUE) {
++      recordWaitFailure();
++      break;
++    }
+   }
+   if (hook && _busyWaitEndHook != nullptr) _busyWaitEndHook();
+ 
+@@ -402,8 +510,17 @@ void EpdBus::sendPlaneFlipped(uint8_t ramCmd, const uint8_t* plane, uint16_t hei
+   endTxn();
+ }
+ 
+-void EpdBus::sendPlaneFlippedInverted(uint8_t ramCmd, const uint8_t* plane, uint16_t height,
+-                                      uint16_t widthBytes) {
++void EpdBus::sendPlaneFlippedWindow(uint8_t ramCmd, const uint8_t* plane, uint16_t frameWidthBytes, uint16_t xByte,
++                                    uint16_t y, uint16_t height, uint16_t widthBytes) {
++  cmd(ramCmd);
++  beginTxn();
++  for (int row = static_cast<int>(y + height) - 1; row >= static_cast<int>(y); --row) {
++    rawWriteBytes(plane + static_cast<uint32_t>(row) * frameWidthBytes + xByte, widthBytes);
++  }
++  endTxn();
++}
++
++void EpdBus::sendPlaneFlippedInverted(uint8_t ramCmd, const uint8_t* plane, uint16_t height, uint16_t widthBytes) {
+   // Streams ~plane[i] row-reversed without a host-side copy of the inverted
+   // frame (the C3 boards have no RAM to spare for one). Same single CS-low
+   // burst contract as sendPlaneFlipped().
+diff --git a/libs/display/FreeInkDisplay/src/bus/EpdBus.h b/libs/display/FreeInkDisplay/src/bus/EpdBus.h
+index 7c9f3077dd7690e8754fed913086411e9318ccd5..c0122dbb41a1dbd3e49d97367fde5e14dfbc7562 100644
+--- a/libs/display/FreeInkDisplay/src/bus/EpdBus.h
++++ b/libs/display/FreeInkDisplay/src/bus/EpdBus.h
+@@ -20,6 +20,8 @@ enum class BusyPolarity : uint8_t {
+   UcIdleHigh,  // UC8179/UC8279 X4 Pro: delay one tick, then wait until BUSY_N is HIGH
+ };
+ 
++enum class BusyWaitStatus : uint8_t { Ready, TimedOut };
++
+ struct EpdPins {
+   int8_t sclk;
+   int8_t mosi;
+@@ -39,6 +41,21 @@ class EpdBus {
+   // M5 PaperColor) that must be held de-asserted during panel transactions.
+   void begin(const EpdPins& pins, uint32_t spiHz, BusyPolarity busy, int8_t spiMiso = -1, int8_t coCs = -1);
+ 
++  // Checked-operation scope: a BUSY timeout latches the scope failed and all
++  // later writes are suppressed until endCheckedOperation().
++  void beginCheckedOperation() {
++    _checkedOperation = true;
++    _checkedWaitFailed = false;
++    _checkedTxnSuppressed = false;
++  }
++  bool endCheckedOperation() {
++    const bool succeeded = !_checkedWaitFailed;
++    _checkedOperation = false;
++    _checkedTxnSuppressed = false;
++    return succeeded;
++  }
++  bool checkedOperationFailed() const { return _checkedOperation && _checkedWaitFailed; }
++
+   // Hardware reset pulse; extraSettleMs adds a post-reset settle (X3 needs 50 ms).
+   void reset(uint16_t extraSettleMs = 0);
+ 
+@@ -54,14 +71,21 @@ class EpdBus {
+   // Grouped transaction primitives (used by multi-step sequences, e.g. M5).
+   void beginTxn();
+   void endTxn();
+-  void rawCmd(uint8_t c);                            // assumes a transaction is open
+-  void rawData(uint8_t d);                           // assumes a transaction is open
++  void rawCmd(uint8_t c);                              // assumes a transaction is open
++  void rawData(uint8_t d);                             // assumes a transaction is open
+   void rawWriteBytes(const uint8_t* d, uint16_t len);  // bulk data, transaction open
+ 
+   // Wait for a refresh/operation to finish using the configured (or given) polarity.
+   void waitBusy(const char* tag = nullptr);
+   void waitBusy(BusyPolarity p, const char* tag = nullptr);
+ 
++  // Bounded status-returning wait for command sequences that must stop after
++  // a physical BUSY timeout. It retains the same long-wait hooks and slice
++  // policy as waitBusy(); checked X3 full and window A/B paths both use it.
++  // Legacy void waits keep their existing interrupt/poll behavior.
++  BusyWaitStatus waitBusyChecked(const char* tag = nullptr);
++  BusyWaitStatus waitBusyChecked(BusyPolarity p, const char* tag = nullptr);
++
+   // Like waitBusy(), but sleeps the calling task on a BUSY-edge interrupt and
+   // wakes exactly on the completion edge instead of polling every 1 ms. For the
+   // refresh-completion wait: it confirms the waveform is running (short bounded
+@@ -99,6 +123,11 @@ class EpdBus {
+   // mid-stream. (cmd uses its own CS pulse, matching the OEM sequence.)
+   void sendPlaneFlipped(uint8_t ramCmd, const uint8_t* plane, uint16_t height, uint16_t widthBytes);
+ 
++  // Stream a byte-aligned rectangle from a full framebuffer, bottom row first,
++  // without allocating a packed window buffer.
++  void sendPlaneFlippedWindow(uint8_t ramCmd, const uint8_t* plane, uint16_t frameWidthBytes, uint16_t xByte,
++                              uint16_t y, uint16_t height, uint16_t widthBytes);
++
+   // sendPlaneFlipped() with every byte complemented on the way out (chunked, no
+   // host-side inverted copy). Presents an "old" plane as the target's opposite
+   // so a differential waveform re-drives every pixel toward its target.
+@@ -118,6 +147,14 @@ class EpdBus {
+   void (*_busyWaitBeginHook)() = nullptr;
+   void (*_busyWaitEndHook)() = nullptr;
+   bool (*_busyWaitSliceHook)(int8_t busyPin, uint8_t busyLevel) = nullptr;
++  bool _checkedOperation = false;
++  bool _checkedWaitFailed = false;
++  bool _checkedTxnSuppressed = false;
++
++  bool writesAllowed() const { return !_checkedOperation || !_checkedWaitFailed; }
++  void recordWaitFailure() {
++    if (_checkedOperation) _checkedWaitFailed = true;
++  }
+ 
+   // One idle step of a long BUSY wait: defer to the slice hook once the wait
+   // has proven long, otherwise (or if the hook declines) plain-delay.
+diff --git a/libs/display/FreeInkDisplay/src/driver/PanelDriver.h b/libs/display/FreeInkDisplay/src/driver/PanelDriver.h
+index ae67da5dc8298d5fdb5fa6d44be08e04480ba4b9..c6f6ebddc77119aebb298f2a0a2a7a9d1c887a48 100644
+--- a/libs/display/FreeInkDisplay/src/driver/PanelDriver.h
++++ b/libs/display/FreeInkDisplay/src/driver/PanelDriver.h
+@@ -14,6 +14,7 @@
+ 
+ #include <Arduino.h>
+ 
++#include "../../include/DisplayUpdateResult.h"
+ #include "../../include/GrayscaleCapabilities.h"
+ #include "../bus/EpdBus.h"
+ 
+@@ -56,6 +57,41 @@ class PanelDriver {
+     display(bus, fb, prev, RefreshMode::Fast, turnOff);
+   }
+ 
++  // Checked presentation is an additive API for callers that must acknowledge
++  // a frame only after the controller reports ready. Drivers without a checked
++  // implementation retain their blocking display behavior.
++  virtual DisplayUpdateResult displayChecked(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode,
++                                             bool turnOff) {
++    const uint32_t startedAt = millis();
++    bus.beginCheckedOperation();
++    display(bus, fb, prev, mode, turnOff);
++    const bool completed = bus.endCheckedOperation();
++    if (!completed) {
++      return {DisplayUpdateKind::Full, DisplayUpdateKind::Full, DisplayUpdateError::BusyTimeout,
++              DisplayUpdateFallback::None, static_cast<uint32_t>(millis() - startedAt)};
++    }
++    return {DisplayUpdateKind::Full, DisplayUpdateKind::Full, DisplayUpdateError::None, DisplayUpdateFallback::None,
++            static_cast<uint32_t>(millis() - startedAt)};
++  }
++  virtual DisplayUpdateResult displayWindowChecked(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, uint16_t x,
++                                                   uint16_t y, uint16_t w, uint16_t h, bool turnOff) {
++    (void)x;
++    (void)y;
++    (void)w;
++    (void)h;
++    DisplayUpdateResult result = displayChecked(bus, fb, prev, RefreshMode::Fast, turnOff);
++    result.requestedKind = DisplayUpdateKind::Window;
++    result.fallback = DisplayUpdateFallback::UnsupportedDriver;
++    return result;
++  }
++  virtual bool supportsExperimentalWindowUpdates() const { return false; }
++  virtual bool checkedDisplayReady(const EpdBus& bus) const {
++    (void)bus;
++    return true;
++  }
++  virtual void invalidateWindowBaseline() {}
++  virtual WindowBaselineState windowBaselineState() const { return WindowBaselineState::Invalid; }
++
+   // True when displayStart() defers (returns true) rather than completing
+   // inline. Lets the facade skip async scaffolding (shadow setup) on blocking
+   // drivers without a trial call, and lets hosts size overlap buffers up
+diff --git a/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.cpp b/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.cpp
+index 556f296c844ec43650718dfb04f264a43c650bc0..abbe417bac1ee050033f45236fff14e44c135fcc 100644
+--- a/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.cpp
++++ b/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.cpp
+@@ -93,6 +93,26 @@ void Uc8253X3Driver::triggerRefresh(EpdBus& bus, bool turnOff) {
+   }
+ }
+ 
++BusyWaitStatus Uc8253X3Driver::triggerRefreshChecked(EpdBus& bus, bool turnOff, bool* refreshTriggered) {
++  if (!_isScreenOn) {
++    bus.cmd(CMD_POWER_ON);
++    if (bus.waitBusyChecked(" X3_PON") != BusyWaitStatus::Ready) return BusyWaitStatus::TimedOut;
++    _isScreenOn = true;
++  }
++  bus.cmd(CMD_DISPLAY_REFRESH);
++  if (refreshTriggered != nullptr) *refreshTriggered = true;
++  if (bus.waitBusyChecked(" X3_DRF") != BusyWaitStatus::Ready) return BusyWaitStatus::TimedOut;
++  if (turnOff) {
++    bus.cmd(CMD_POWER_OFF);
++    const BusyWaitStatus powerOffStatus = bus.waitBusyChecked(" X3_POF");
++    // A failed POF leaves the physical rail state unknown. Treat it as off so
++    // recovery sends an explicit PON before attempting another refresh.
++    _isScreenOn = false;
++    if (powerOffStatus != BusyWaitStatus::Ready) return BusyWaitStatus::TimedOut;
++  }
++  return BusyWaitStatus::Ready;
++}
++
+ void Uc8253X3Driver::initController(EpdBus& bus) {
+   bus.cmd(CMD_PANEL_SETTING);
+   bus.data(0x3F);
+@@ -153,15 +173,20 @@ void Uc8253X3Driver::begin(EpdBus& bus) {
+   _forcedConditionPassesNext = 0;
+   _inGrayscaleMode = false;
+   _grayState = {};
++  _windowBaselineState = WindowBaselineState::Invalid;
++  _checkedRecoveryRequired = false;
+   initController(bus);
+ }
+ 
+ void Uc8253X3Driver::display(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode, bool turnOff) {
++  if (_checkedRecoveryRequired) return;
+   displayStart(bus, fb, prev, mode, turnOff);
+   displayFinish(bus, fb);
+ }
+ 
+ bool Uc8253X3Driver::displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode, bool turnOff) {
++  if (_checkedRecoveryRequired) return false;
++  invalidateWindowBaseline();
+   (void)prev;
+   if (!_isScreenOn && !turnOff) {
+     mode = RefreshMode::Half;  // wake transition gets a stronger waveform
+@@ -218,7 +243,192 @@ bool Uc8253X3Driver::displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t*
+   return true;
+ }
+ 
++bool Uc8253X3Driver::prepareCheckedDisplay(EpdBus& bus, const uint8_t* fb, RefreshMode mode, bool turnOff,
++                                           bool* doFullSync, bool* fastMode) {
++  if (!fb || !doFullSync || !fastMode) return false;
++  if (_checkedRecoveryRequired) bus.cmd(CMD_PARTIAL_OUT);
++  if (!_isScreenOn && !turnOff) mode = RefreshMode::Half;
++  if (_inGrayscaleMode) {
++    _inGrayscaleMode = false;
++    _grayState = {};
++    _redRamSynced = false;
++  }
++
++  *fastMode = mode == RefreshMode::Fast;
++  const bool halfMode = mode == RefreshMode::Half;
++  const bool forcedFullSync = _forceFullSyncNext;
++  *doFullSync = (!*fastMode && !halfMode) || !_redRamSynced || _initialFullSyncsRemaining > 0 || forcedFullSync;
++  const bool doHalfSync = halfMode && !*doFullSync;
++  _grayState.lastBaseWasPartial = !*doFullSync;
++
++  if (*doFullSync) {
++    loadBankCdi(bus, 0x29, 0x07, _cfg.full);
++    bus.fillPlane(CMD_DTM1, 0xFF, _h, _wb);
++    bus.cmd(CMD_DATA_STOP);
++    bus.sendPlaneFlipped(CMD_DTM2, fb, _h, _wb);
++  } else if (doHalfSync) {
++    loadBankCdi(bus, 0xA9, 0x07, _cfg.half);
++    bus.sendPlaneFlipped(CMD_DTM2, fb, _h, _wb);
++  } else {
++    loadBankCdi(bus, 0x29, 0x07, _cfg.fast);
++    bus.sendPlaneFlipped(CMD_DTM2, fb, _h, _wb);
++  }
++  return true;
++}
++
++BusyWaitStatus Uc8253X3Driver::finishCheckedDisplay(EpdBus& bus, const uint8_t* fb, bool doFullSync, bool fastMode,
++                                                    bool turnOff, bool* refreshTriggered) {
++  if (triggerRefreshChecked(bus, turnOff, refreshTriggered) != BusyWaitStatus::Ready) return BusyWaitStatus::TimedOut;
++  if (!fastMode) delay(200);
++
++  uint8_t postConditionPasses = 0;
++  if (doFullSync) {
++    if (_forceFullSyncNext)
++      postConditionPasses = _forcedConditionPassesNext;
++    else if (_initialFullSyncsRemaining == 1)
++      postConditionPasses = 1;
++  }
++  if (postConditionPasses > 0) {
++    const uint16_t xEnd = static_cast<uint16_t>(_w - 1);
++    const uint16_t yEnd = static_cast<uint16_t>(_h - 1);
++    const uint8_t window[9] = {0x00, 0x00, static_cast<uint8_t>(xEnd >> 8), static_cast<uint8_t>(xEnd & 0xFF),
++                               0x00, 0x00, static_cast<uint8_t>(yEnd >> 8), static_cast<uint8_t>(yEnd & 0xFF),
++                               0x01};
++    loadBankCdi(bus, 0xA9, 0x07, _cfg.normal);
++    for (uint8_t i = 0; i < postConditionPasses; ++i) {
++      bus.cmd(CMD_PARTIAL_IN);
++      bus.cmdData(CMD_PARTIAL_WINDOW, window, sizeof(window));
++      bus.sendPlaneFlipped(CMD_DTM2, fb, _h, _wb);
++      bus.cmd(CMD_PARTIAL_OUT);
++      if (triggerRefreshChecked(bus, false, refreshTriggered) != BusyWaitStatus::Ready) return BusyWaitStatus::TimedOut;
++    }
++  }
++
++  bus.sendPlaneFlipped(CMD_DTM1, fb, _h, _wb);
++  bus.cmd(CMD_DATA_STOP);
++  _grayState.lsbValid = false;
++  _redRamSynced = true;
++
++  if (doFullSync) {
++    loadBankCdi(bus, 0x29, 0x07, _cfg.fast);
++    bus.sendPlaneFlipped(CMD_DTM2, fb, _h, _wb);
++    if (triggerRefreshChecked(bus, turnOff, refreshTriggered) != BusyWaitStatus::Ready) return BusyWaitStatus::TimedOut;
++    bus.sendPlaneFlipped(CMD_DTM1, fb, _h, _wb);
++    bus.cmd(CMD_DATA_STOP);
++  }
++
++  if (doFullSync && _initialFullSyncsRemaining > 0) --_initialFullSyncsRemaining;
++  _forceFullSyncNext = false;
++  _forcedConditionPassesNext = 0;
++  return BusyWaitStatus::Ready;
++}
++
++DisplayUpdateResult Uc8253X3Driver::displayChecked(EpdBus& bus, const uint8_t* fb, const uint8_t* prev,
++                                                   RefreshMode mode, bool turnOff) {
++  (void)prev;
++  const uint32_t startedAt = millis();
++  if (!fb) {
++    return {DisplayUpdateKind::Full, DisplayUpdateKind::None, DisplayUpdateError::InvalidRegion,
++            DisplayUpdateFallback::None, 0};
++  }
++  if (!checkedDisplayReady(bus)) {
++    return {DisplayUpdateKind::Full, DisplayUpdateKind::None, DisplayUpdateError::BusyNotReady,
++            DisplayUpdateFallback::None, 0};
++  }
++
++  if (_windowBaselineState != WindowBaselineState::Valid) _redRamSynced = false;
++  _windowBaselineState = WindowBaselineState::Resyncing;
++  bus.beginCheckedOperation();
++  bool doFullSync = false;
++  bool fastMode = false;
++  bool refreshTriggered = false;
++  const bool prepared = prepareCheckedDisplay(bus, fb, mode, turnOff, &doFullSync, &fastMode);
++  const BusyWaitStatus waitStatus =
++      prepared ? finishCheckedDisplay(bus, fb, doFullSync, fastMode, turnOff, &refreshTriggered)
++               : BusyWaitStatus::TimedOut;
++  const bool busSucceeded = bus.endCheckedOperation();
++  const uint32_t duration = static_cast<uint32_t>(millis() - startedAt);
++  if (!prepared || waitStatus != BusyWaitStatus::Ready || !busSucceeded) {
++    _checkedRecoveryRequired = true;
++    _redRamSynced = false;
++    invalidateWindowBaseline();
++    return {DisplayUpdateKind::Full, refreshTriggered ? DisplayUpdateKind::Full : DisplayUpdateKind::None,
++            DisplayUpdateError::BusyTimeout, DisplayUpdateFallback::None, duration};
++  }
++
++  _checkedRecoveryRequired = false;
++  _windowBaselineState = turnOff ? WindowBaselineState::Invalid : WindowBaselineState::Valid;
++  return {DisplayUpdateKind::Full, DisplayUpdateKind::Full, DisplayUpdateError::None, DisplayUpdateFallback::None,
++          duration};
++}
++
++DisplayUpdateResult Uc8253X3Driver::displayWindowChecked(EpdBus& bus, const uint8_t* fb, const uint8_t* prev,
++                                                         uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool turnOff) {
++  (void)prev;
++  if (!fb || w == 0 || h == 0 || x % 8 != 0 || w % 8 != 0 || x >= _w || y >= _h || w > _w - x || h > _h - y) {
++    return {DisplayUpdateKind::Window, DisplayUpdateKind::None, DisplayUpdateError::InvalidRegion,
++            DisplayUpdateFallback::None, 0};
++  }
++  if (!checkedDisplayReady(bus)) {
++    return {DisplayUpdateKind::Window, DisplayUpdateKind::None, DisplayUpdateError::BusyNotReady,
++            DisplayUpdateFallback::None, 0};
++  }
++  if (_windowBaselineState != WindowBaselineState::Valid || _checkedRecoveryRequired || _inGrayscaleMode) {
++    DisplayUpdateResult fallback = displayChecked(bus, fb, nullptr, RefreshMode::Fast, turnOff);
++    fallback.requestedKind = DisplayUpdateKind::Window;
++    fallback.fallback = DisplayUpdateFallback::BaselineInvalid;
++    return fallback;
++  }
++
++  const uint32_t startedAt = millis();
++  const uint16_t xEnd = static_cast<uint16_t>(x + w - 1);
++  const uint16_t yEnd = static_cast<uint16_t>(y + h - 1);
++  const uint16_t gateYStart = static_cast<uint16_t>((_h - 1) - yEnd);
++  const uint16_t gateYEnd = static_cast<uint16_t>((_h - 1) - y);
++  const uint8_t window[9] = {static_cast<uint8_t>(x >> 8),
++                             static_cast<uint8_t>(x & 0xFF),
++                             static_cast<uint8_t>(xEnd >> 8),
++                             static_cast<uint8_t>(xEnd & 0xFF),
++                             static_cast<uint8_t>(gateYStart >> 8),
++                             static_cast<uint8_t>(gateYStart & 0xFF),
++                             static_cast<uint8_t>(gateYEnd >> 8),
++                             static_cast<uint8_t>(gateYEnd & 0xFF),
++                             0x01};
++
++  bus.beginCheckedOperation();
++  loadBankCdi(bus, 0x29, 0x07, _cfg.fast);
++  bus.cmd(CMD_PARTIAL_IN);
++  bus.cmdData(CMD_PARTIAL_WINDOW, window, sizeof(window));
++  bus.sendPlaneFlippedWindow(CMD_DTM2, fb, _wb, static_cast<uint16_t>(x / 8), y, h, static_cast<uint16_t>(w / 8));
++  bool refreshTriggered = false;
++  const BusyWaitStatus waitStatus = triggerRefreshChecked(bus, turnOff, &refreshTriggered);
++  if (waitStatus == BusyWaitStatus::Ready) {
++    bus.sendPlaneFlippedWindow(CMD_DTM1, fb, _wb, static_cast<uint16_t>(x / 8), y, h, static_cast<uint16_t>(w / 8));
++    bus.cmd(CMD_DATA_STOP);
++    bus.cmd(CMD_PARTIAL_OUT);
++  }
++  const bool busSucceeded = bus.endCheckedOperation();
++  const uint32_t duration = static_cast<uint32_t>(millis() - startedAt);
++  if (waitStatus != BusyWaitStatus::Ready || !busSucceeded) {
++    _checkedRecoveryRequired = true;
++    _redRamSynced = false;
++    invalidateWindowBaseline();
++    return {DisplayUpdateKind::Window, refreshTriggered ? DisplayUpdateKind::Window : DisplayUpdateKind::None,
++            DisplayUpdateError::BusyTimeout, DisplayUpdateFallback::None, duration};
++  }
++
++  _windowBaselineState = turnOff ? WindowBaselineState::Invalid : WindowBaselineState::Valid;
++  _redRamSynced = !turnOff;
++  return {DisplayUpdateKind::Window, DisplayUpdateKind::Window, DisplayUpdateError::None, DisplayUpdateFallback::None,
++          duration};
++}
++
++bool Uc8253X3Driver::checkedDisplayReady(const EpdBus& bus) const { return !_pendingRefresh && !bus.isBusy(); }
++
++void Uc8253X3Driver::invalidateWindowBaseline() { _windowBaselineState = WindowBaselineState::Invalid; }
++
+ void Uc8253X3Driver::displayFinish(EpdBus& bus, const uint8_t* fb) {
++  if (_checkedRecoveryRequired) return;
+   if (!_pendingRefresh) return;
+   _pendingRefresh = false;
+   const bool turnOff = _pendingTurnOff;
+@@ -239,8 +449,10 @@ void Uc8253X3Driver::displayFinish(EpdBus& bus, const uint8_t* fb) {
+ 
+   uint8_t postConditionPasses = 0;
+   if (doFullSync) {
+-    if (_forceFullSyncNext) postConditionPasses = _forcedConditionPassesNext;
+-    else if (_initialFullSyncsRemaining == 1) postConditionPasses = 1;
++    if (_forceFullSyncNext)
++      postConditionPasses = _forcedConditionPassesNext;
++    else if (_initialFullSyncsRemaining == 1)
++      postConditionPasses = 1;
+   }
+   if (postConditionPasses > 0) {
+     const uint16_t xEnd = static_cast<uint16_t>(_w - 1);
+@@ -286,6 +498,8 @@ void Uc8253X3Driver::displayFinish(EpdBus& bus, const uint8_t* fb) {
+ }
+ 
+ void Uc8253X3Driver::displayGrayscaleBase(EpdBus& bus, const uint8_t* fb, RefreshMode fallback, bool turnOff) {
++  if (_checkedRecoveryRequired) return;
++  invalidateWindowBaseline();
+   // OEM V5.6.33 grayscale base update: write the new frame to DTM2 and fire
+   // the "AA-pre-BW(mid)" bank as a differential refresh against the old frame
+   // still held in DTM1. Changed pixels get the strong 0xAA/0x55 transition
+@@ -326,6 +540,8 @@ void Uc8253X3Driver::displayGrayscaleBase(EpdBus& bus, const uint8_t* fb, Refres
+ }
+ 
+ void Uc8253X3Driver::preconditionGrayscale(EpdBus& bus, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
++  if (_checkedRecoveryRequired) return;
++  invalidateWindowBaseline();
+   // OEM V5.6.33 "AA-pre-BW(mid)" pass: gentle settle of the displayed BW
+   // frame (DTM1 == DTM2 == frame after display()'s post-refresh DTM1 sync)
+   // that leaves particles receptive to the weak grayscale nudge waveform.
+@@ -365,6 +581,8 @@ void Uc8253X3Driver::preconditionGrayscale(EpdBus& bus, uint16_t x, uint16_t y,
+ }
+ 
+ void Uc8253X3Driver::copyGrayscaleLsb(EpdBus& bus, const uint8_t* lsb) {
++  if (_checkedRecoveryRequired) return;
++  invalidateWindowBaseline();
+   if (!lsb) {
+     _grayState.lsbValid = false;
+     return;
+@@ -375,6 +593,8 @@ void Uc8253X3Driver::copyGrayscaleLsb(EpdBus& bus, const uint8_t* lsb) {
+ }
+ 
+ void Uc8253X3Driver::copyGrayscaleMsb(EpdBus& bus, const uint8_t* msb) {
++  if (_checkedRecoveryRequired) return;
++  invalidateWindowBaseline();
+   if (!msb || !_grayState.lsbValid) return;
+   bus.sendPlaneFlipped(CMD_DTM2, msb, _h, _wb);  // MSB plane -> "new" RAM
+   bus.cmd(CMD_DATA_STOP);
+@@ -382,6 +602,8 @@ void Uc8253X3Driver::copyGrayscaleMsb(EpdBus& bus, const uint8_t* msb) {
+ 
+ void Uc8253X3Driver::writeGrayscalePlaneStrip(EpdBus& bus, GrayPlane plane, const uint8_t* rows, uint16_t yStart,
+                                               uint16_t numRows) {
++  if (_checkedRecoveryRequired) return;
++  invalidateWindowBaseline();
+   if (!rows || numRows == 0) return;
+   // PTL partial-window in GATE space (logical row y lives at gate H-1-y), rows
+   // emitted bottom-first so they land at the same gates the full-frame write
+@@ -414,6 +636,8 @@ void Uc8253X3Driver::writeGrayscalePlaneStrip(EpdBus& bus, GrayPlane plane, cons
+ 
+ void Uc8253X3Driver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, const unsigned char* lut,
+                                  bool factoryMode) {
++  if (_checkedRecoveryRequired) return;
++  invalidateWindowBaseline();
+   (void)fb;
+   (void)lut;
+   if (!_grayState.lsbValid) return;
+@@ -438,6 +662,8 @@ void Uc8253X3Driver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, c
+ }
+ 
+ void Uc8253X3Driver::cleanupGrayscaleBuffers(EpdBus& bus, const uint8_t* bw) {
++  if (_checkedRecoveryRequired) return;
++  invalidateWindowBaseline();
+   if (!bw) return;
+   // Rebase both planes from the restored BW buffer (same data to DTM1 + DTM2).
+   bus.sendPlaneFlipped(CMD_DTM2, bw, _h, _wb);
+@@ -455,6 +681,8 @@ void Uc8253X3Driver::cleanupGrayscaleBuffers(EpdBus& bus, const uint8_t* bw) {
+ }
+ 
+ void Uc8253X3Driver::grayscaleRevert(EpdBus& bus, const uint8_t* fb) {
++  if (_checkedRecoveryRequired) return;
++  invalidateWindowBaseline();
+   (void)fb;
+   if (!_inGrayscaleMode) return;
+   _inGrayscaleMode = false;
+@@ -473,6 +701,7 @@ void Uc8253X3Driver::grayscaleRevert(EpdBus& bus, const uint8_t* fb) {
+ }
+ 
+ void Uc8253X3Driver::requestResync(uint8_t settlePasses) {
++  invalidateWindowBaseline();
+   _forceFullSyncNext = true;
+   _forcedConditionPassesNext = settlePasses;
+ }
+@@ -480,9 +709,12 @@ void Uc8253X3Driver::requestResync(uint8_t settlePasses) {
+ void Uc8253X3Driver::skipInitialResync() {
+   _initialFullSyncsRemaining = 0;
+   _redRamSynced = true;
++  _windowBaselineState = WindowBaselineState::Invalid;
+ }
+ 
+ void Uc8253X3Driver::deepSleep(EpdBus& bus) {
++  if (_checkedRecoveryRequired) return;
++  invalidateWindowBaseline();
+   if (_isScreenOn) {
+     bus.cmd(CMD_POWER_OFF);
+     bus.waitBusy(" X3 power-down");
+diff --git a/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.h b/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.h
+index 966966c409e62bc74a9f6ff7d58026c31e3dd9c2..e323ff57a28280818f9c8abbd2e49a5341abb36a 100644
+--- a/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.h
++++ b/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.h
+@@ -53,6 +53,14 @@ class Uc8253X3Driver : public PanelDriver {
+   void deepSleep(EpdBus& bus) override;
+ 
+   void display(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode, bool turnOff) override;
++  DisplayUpdateResult displayChecked(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode,
++                                     bool turnOff) override;
++  DisplayUpdateResult displayWindowChecked(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, uint16_t x, uint16_t y,
++                                           uint16_t w, uint16_t h, bool turnOff) override;
++  bool supportsExperimentalWindowUpdates() const override { return true; }
++  bool checkedDisplayReady(const EpdBus& bus) const override;
++  void invalidateWindowBaseline() override;
++  WindowBaselineState windowBaselineState() const override { return _windowBaselineState; }
+   // Refresh split: displayStart fires the waveform and returns while the ~130-770 ms
+   // X3 waveform runs (so the render task can overlap non-SPI work); displayFinish
+   // waits BUSY out and runs the post-waveform DTM1 sync + conditioning passes.
+@@ -83,6 +91,11 @@ class Uc8253X3Driver : public PanelDriver {
+   void loadBank(EpdBus& bus, const Uc8253LutBank& bank);
+   void loadBankCdi(EpdBus& bus, uint8_t cdi0, uint8_t cdi1, const Uc8253LutBank& bank);
+   void triggerRefresh(EpdBus& bus, bool turnOff);
++  BusyWaitStatus triggerRefreshChecked(EpdBus& bus, bool turnOff, bool* refreshTriggered = nullptr);
++  bool prepareCheckedDisplay(EpdBus& bus, const uint8_t* fb, RefreshMode mode, bool turnOff, bool* doFullSync,
++                             bool* fastMode);
++  BusyWaitStatus finishCheckedDisplay(EpdBus& bus, const uint8_t* fb, bool doFullSync, bool fastMode, bool turnOff,
++                                      bool* refreshTriggered);
+ 
+   const Uc8253X3Config& _cfg;
+ 
+@@ -111,6 +124,8 @@ class Uc8253X3Driver : public PanelDriver {
+   bool _pendingTurnOff = false;
+   bool _pendingDoFullSync = false;
+   bool _pendingFastMode = false;
++  WindowBaselineState _windowBaselineState = WindowBaselineState::Invalid;
++  bool _checkedRecoveryRequired = false;
+ };
+ 
+ PanelDriver& uc8253X3Driver();
+diff --git a/libs/display/FreeInkDisplay/test/host/pro_stubs/EpdBus.h b/libs/display/FreeInkDisplay/test/host/pro_stubs/EpdBus.h
+index 0eaefd512122247bc447891a8c82ab8e29e27010..383c049fbfab13927a78aeb62351f08f5f08e0c2 100644
+--- a/libs/display/FreeInkDisplay/test/host/pro_stubs/EpdBus.h
++++ b/libs/display/FreeInkDisplay/test/host/pro_stubs/EpdBus.h
+@@ -4,36 +4,73 @@
+ #include <vector>
+ namespace freeink {
+ enum class BusyPolarity { ActiveHigh, ActiveLow, X3TwoPhase, UcIdleHigh };
+-struct EpdPins { int8_t sclk, mosi, cs, dc, rst, busy, powerEnable=-1; };
++struct EpdPins {
++  int8_t sclk, mosi, cs, dc, rst, busy, powerEnable = -1;
++};
+ class EpdBus {
+  public:
+-  struct Write { uint8_t command; std::vector<uint8_t> bytes; unsigned transactions=0; };
++  struct Write {
++    uint8_t command;
++    std::vector<uint8_t> bytes;
++    unsigned transactions = 0;
++  };
+   std::vector<Write> writes;
+-  bool transaction=false;
+-  unsigned waits=0;
+-  void clear() { assert(!transaction); writes.clear(); waits=0; }
+-  void begin(const EpdPins&, uint32_t, BusyPolarity, int8_t=-1, int8_t=-1) {}
+-  void cmd(uint8_t c) { assert(!transaction); writes.push_back({c,{}}); }
+-  void data(uint8_t b) { data(&b,1); }
++  bool transaction = false;
++  unsigned waits = 0;
++  void clear() {
++    assert(!transaction);
++    writes.clear();
++    waits = 0;
++  }
++  void beginCheckedOperation() {}
++  bool endCheckedOperation() { return true; }
++  bool checkedOperationFailed() const { return false; }
++  void begin(const EpdPins&, uint32_t, BusyPolarity, int8_t = -1, int8_t = -1) {}
++  void cmd(uint8_t c) {
++    assert(!transaction);
++    writes.push_back({c, {}});
++  }
++  void data(uint8_t b) { data(&b, 1); }
+   void data(const uint8_t* p, uint16_t n) {
+-    assert(!transaction); ++writes.back().transactions;
+-    writes.back().bytes.insert(writes.back().bytes.end(),p,p+n);
++    assert(!transaction);
++    ++writes.back().transactions;
++    writes.back().bytes.insert(writes.back().bytes.end(), p, p + n);
++  }
++  void beginTxn() {
++    assert(!transaction);
++    transaction = true;
++    ++writes.back().transactions;
++  }
++  void endTxn() {
++    assert(transaction);
++    transaction = false;
+   }
+-  void beginTxn() { assert(!transaction); transaction=true; ++writes.back().transactions; }
+-  void endTxn() { assert(transaction); transaction=false; }
+   void rawWriteBytes(const uint8_t* p, uint16_t n) {
+-    assert(transaction); writes.back().bytes.insert(writes.back().bytes.end(),p,p+n);
++    assert(transaction);
++    writes.back().bytes.insert(writes.back().bytes.end(), p, p + n);
+   }
+   void fillPlane(uint8_t c, uint8_t v, uint16_t h, uint16_t wb) {
+-    cmd(c); beginTxn(); writes.back().bytes.assign(size_t(h)*wb,v); endTxn();
++    cmd(c);
++    beginTxn();
++    writes.back().bytes.assign(size_t(h) * wb, v);
++    endTxn();
++  }
++  void cmdData(uint8_t c, const uint8_t* p, uint16_t n) {
++    cmd(c);
++    data(p, n);
++  }
++  void reset(uint16_t = 0) {}
++  void waitBusy(const char* = nullptr) {
++    assert(!transaction);
++    ++waits;
++  }
++  void waitRefreshComplete(const char* = nullptr) {
++    assert(!transaction);
++    ++waits;
+   }
+-  void cmdData(uint8_t c, const uint8_t* p, uint16_t n) { cmd(c); data(p,n); }
+-  void reset(uint16_t=0) {}
+-  void waitBusy(const char* =nullptr) { assert(!transaction); ++waits; }
+-  void waitRefreshComplete(const char* =nullptr) { assert(!transaction); ++waits; }
+   bool isBusy() const { return false; }
+   EpdPins pins() const { return {}; }
+   void setBusyWaitHooks(void (*)(), void (*)()) {}
+-  void setBusyWaitSliceHook(bool (*)(int8_t,uint8_t)) {}
++  void setBusyWaitSliceHook(bool (*)(int8_t, uint8_t)) {}
+ };
+-}
++}  // namespace freeink
+diff --git a/libs/display/FreeInkDisplay/test/host/run_pro.py b/libs/display/FreeInkDisplay/test/host/run_pro.py
+index 3cce3ca2f2db04acc138ebd2cd4004fd65358310..3beb9e11d0f383e5c84213992e31d16911f97687 100644
+--- a/libs/display/FreeInkDisplay/test/host/run_pro.py
++++ b/libs/display/FreeInkDisplay/test/host/run_pro.py
+@@ -19,6 +19,7 @@ with tempfile.TemporaryDirectory(prefix="freeink-pro-test-") as directory:
+     shutil.copy2(LIB / "src/driver/PanelDriver.h", root / "src/driver/PanelDriver.h")
+     shutil.copy2(LIB / "src/FreeInkDisplay.cpp", root / "src/FreeInkDisplay.cpp")
+     shutil.copy2(LIB / "include/FreeInkDisplay.h", root / "include/FreeInkDisplay.h")
++    shutil.copy2(LIB / "include/DisplayUpdateResult.h", root / "include/DisplayUpdateResult.h")
+     shutil.copy2(LIB / "include/GrayscaleCapabilities.h", root / "include/GrayscaleCapabilities.h")
+     for name in ("Ssd1677Luts.h", "Uc8279X3Luts.h"):
+         shutil.copy2(LIB / f"src/lut/{name}", root / f"src/lut/{name}")
+diff --git a/libs/display/FreeInkDisplay/test/host/run_uc8253_power.py b/libs/display/FreeInkDisplay/test/host/run_uc8253_power.py
+index bbc208c9f86cde44d1c54d7d3664e7eab45f6273..7267d05bab90d4cf3b3839413b6ac53d626cacc3 100644
+--- a/libs/display/FreeInkDisplay/test/host/run_uc8253_power.py
++++ b/libs/display/FreeInkDisplay/test/host/run_uc8253_power.py
+@@ -16,8 +16,11 @@ with tempfile.TemporaryDirectory(prefix="uc8253_power-test-") as directory:
+         shutil.copy2(SOURCE / "driver" / name, root / "driver" / name)
+     shutil.copy2(SOURCE / "lut/Uc8253X3Luts.h", root / "lut/Uc8253X3Luts.h")
+     shutil.copy2(SOURCE.parent / "include/GrayscaleCapabilities.h", root / "GrayscaleCapabilities.h")
++    shutil.copy2(SOURCE.parent / "include/DisplayUpdateResult.h", root / "DisplayUpdateResult.h")
+     panel = root / "driver/PanelDriver.h"
+-    panel.write_text(panel.read_text().replace("../../include/GrayscaleCapabilities.h", "../GrayscaleCapabilities.h"))
++    panel.write_text(panel.read_text()
++                     .replace("../../include/GrayscaleCapabilities.h", "../GrayscaleCapabilities.h")
++                     .replace("../../include/DisplayUpdateResult.h", "../DisplayUpdateResult.h"))
+     (root / "Arduino.h").write_text('''#pragma once
+ #include <cstdint>
+ #include <cstddef>
+@@ -37,18 +40,37 @@ inline struct { unsigned short displayWidth=792, displayHeight=528; unsigned dis
+     (root / "bus/EpdBus.h").write_text('''#pragma once
+ #include <cstdint>
+ #include <cstddef>
++#include <algorithm>
+ #include <vector>
+ namespace freeink {
+ enum class BusyPolarity { X3TwoPhase };
++enum class BusyWaitStatus { Ready, TimedOut };
+ class EpdBus {
+   uint8_t command=0;
++  bool checked=false;
++  bool failed=false;
++  bool writesAllowed() const { return !checked || !failed; }
+ public:
++  struct Write { uint8_t command; std::vector<uint8_t> bytes; };
++  std::vector<Write> writes;
+   std::vector<uint8_t> oldPlane, newPlane, lastBank, rawRegisters;
++  std::vector<BusyWaitStatus> checkedWaits;
+   unsigned powerOns=0;
+-  void cmd(uint8_t c) { command=c; if(c == 4) ++powerOns; }
++  unsigned waits=0;
++  bool busy=false;
++  void clearLog() { writes.clear(); waits=0; checkedWaits.clear(); }
++  void beginCheckedOperation() { checked=true; failed=false; }
++  bool endCheckedOperation() { const bool ok=!failed; checked=false; return ok; }
++  bool checkedOperationFailed() const { return checked && failed; }
++  void cmd(uint8_t c) {
++    if(!writesAllowed()) return;
++    command=c; writes.push_back({c,{}}); if(c == 4) ++powerOns;
++  }
+   void cmdData2(uint8_t c, uint8_t a, uint8_t b) { cmd(c); data(a); data(b); }
+-  void data(uint8_t) {}
++  void data(uint8_t b) { if(writesAllowed() && !writes.empty()) writes.back().bytes.push_back(b); }
+   void data(const uint8_t* p, size_t n) {
++    if(!writesAllowed()) return;
++    if(!writes.empty()) writes.back().bytes.insert(writes.back().bytes.end(),p,p+n);
+     if(n == 49) {
+       if(command == 0x20) rawRegisters.clear();
+       rawRegisters.push_back(command);
+@@ -57,14 +79,48 @@ public:
+   }
+   void cmdData(uint8_t c, const uint8_t* p, size_t n) { cmd(c); data(p,n); }
+   void sendPlaneFlipped(uint8_t c, const uint8_t* p, uint16_t h, uint16_t wb) {
++    if(!writesAllowed()) return;
++    cmd(c);
++    writes.back().bytes.reserve(size_t(h)*wb);
++    for(int row=int(h)-1; row>=0; --row)
++      writes.back().bytes.insert(writes.back().bytes.end(),p+size_t(row)*wb,p+size_t(row+1)*wb);
+     (c == 0x10 ? oldPlane : newPlane).assign(p,p+size_t(h)*wb);
+   }
++  void sendPlaneFlippedWindow(uint8_t c, const uint8_t* p, uint16_t frameWb, uint16_t xByte,
++                              uint16_t y, uint16_t h, uint16_t wb) {
++    if(!writesAllowed()) return;
++    auto& plane=(c == 0x10 ? oldPlane : newPlane);
++    if(plane.size() < size_t(frameWb)*528) plane.assign(size_t(frameWb)*528,0xff);
++    cmd(c);
++    writes.back().bytes.reserve(size_t(h)*wb);
++    for(int row=int(y+h)-1; row>=int(y); --row) {
++      const auto offset=size_t(row)*frameWb+xByte;
++      writes.back().bytes.insert(writes.back().bytes.end(),p+offset,p+offset+wb);
++      std::copy(p+offset,p+offset+wb,plane.begin()+offset);
++    }
++  }
+   void fillPlane(uint8_t c, uint8_t v, uint16_t h, uint16_t wb) {
++    if(!writesAllowed()) return;
++    cmd(c); writes.back().bytes.assign(size_t(h)*wb,v);
+     (c == 0x10 ? oldPlane : newPlane).assign(size_t(h)*wb,v);
+   }
+   void reset(int) {}
+-  void waitBusy(const char*) {}
+-  void waitRefreshComplete(const char*) {}
++  void waitBusy(const char*) {
++    ++waits;
++    if(!checkedWaits.empty()) {
++      if(checkedWaits.front() == BusyWaitStatus::TimedOut) failed=true;
++      checkedWaits.erase(checkedWaits.begin());
++    }
++  }
++  BusyWaitStatus waitBusyChecked(const char*) {
++    ++waits;
++    const auto status=checkedWaits.empty()?BusyWaitStatus::Ready:checkedWaits.front();
++    if(!checkedWaits.empty()) checkedWaits.erase(checkedWaits.begin());
++    if(status == BusyWaitStatus::TimedOut) failed=true;
++    return status;
++  }
++  void waitRefreshComplete(const char*) { ++waits; }
++  bool isBusy() const { return busy; }
+   struct Pins { int8_t busy=0; };
+   Pins pins() const { return {}; }
+   void beginTxn() {}
+@@ -75,9 +131,25 @@ public:
+ ''')
+     (root / "test.cpp").write_text("""
+ #include <cassert>
++#include <algorithm>
+ #include <vector>
+ #include <iostream>
+ #include "driver/Uc8253X3Driver.h"
++static size_t firstCommand(const freeink::EpdBus& bus, uint8_t command) {
++ for(size_t i=0;i<bus.writes.size();++i) if(bus.writes[i].command==command) return i;
++ return bus.writes.size();
++}
++class ContinuingDriver : public freeink::PanelDriver {
++public:
++ uint32_t spiHz() const override { return 1; }
++ freeink::BusyPolarity busyPolarity() const override { return freeink::BusyPolarity::X3TwoPhase; }
++ freeink::PanelGeometry geometry() const override { return {8,1,1,1}; }
++ void begin(freeink::EpdBus&) override {}
++ void deepSleep(freeink::EpdBus&) override {}
++ void display(freeink::EpdBus& bus,const uint8_t*,const uint8_t*,freeink::RefreshMode,bool) override {
++   bus.cmd(0x12); bus.waitBusy(" fake"); bus.cmd(0x10);
++ }
++};
+ int main() {
+  freeink::EpdBus bus; freeink::Uc8253X3Driver d;
+  const auto caps = d.grayscaleCapabilities();
+@@ -91,7 +163,139 @@ int main() {
+  d.display(bus,fb.data(),nullptr,freeink::RefreshMode::Half,true);
+  d.display(bus,fb.data(),nullptr,freeink::RefreshMode::Fast,false);
+  assert(bus.powerOns == 2);
++ assert(d.windowBaselineState() == freeink::WindowBaselineState::Invalid);
++
++ // A first checked region request must perform and report a full baseline sync.
++ bus.clearLog();
++ auto first=d.displayWindowChecked(bus,fb.data(),nullptr,16,10,16,2,false);
++ assert(first.succeeded());
++ assert(first.requestedKind==freeink::DisplayUpdateKind::Window);
++ assert(first.actualKind==freeink::DisplayUpdateKind::Full);
++ assert(first.fallback==freeink::DisplayUpdateFallback::BaselineInvalid);
++ assert(d.windowBaselineState()==freeink::WindowBaselineState::Valid);
++ assert(bus.oldPlane==fb && bus.newPlane==fb);
++
++ // A valid narrow update writes only the addressed bytes, bottom row first.
++ const auto before=fb;
++ fb[10*99+2]=0x12; fb[10*99+3]=0x34;
++ fb[11*99+2]=0x56; fb[11*99+3]=0x78;
++ bus.clearLog();
++ auto window=d.displayWindowChecked(bus,fb.data(),nullptr,16,10,16,2,false);
++ assert(window.succeeded() && window.actualKind==freeink::DisplayUpdateKind::Window);
++ const size_t ptl=firstCommand(bus,0x90);
++ assert(ptl<bus.writes.size());
++ const std::vector<uint8_t> expectedWindow={0x00,0x10,0x00,0x1f,0x02,0x04,0x02,0x05,0x01};
++ assert(bus.writes[ptl].bytes==expectedWindow);
++ const size_t newWrite=firstCommand(bus,0x13);
++ const size_t oldWrite=firstCommand(bus,0x10);
++ assert(newWrite<oldWrite && oldWrite<bus.writes.size());
++ const std::vector<uint8_t> expectedBytes={0x56,0x78,0x12,0x34};
++ assert(bus.writes[newWrite].bytes==expectedBytes);
++ assert(bus.writes[oldWrite].bytes==expectedBytes);
++ for(size_t i=0;i<fb.size();++i) {
++   const bool inside=(i==10*99+2 || i==10*99+3 || i==11*99+2 || i==11*99+3);
++   assert(bus.oldPlane[i]==(inside?fb[i]:before[i]));
++   assert(bus.newPlane[i]==(inside?fb[i]:before[i]));
++ }
++
++ // A DRF timeout is surfaced and nothing is written after the refresh command.
++ fb[10*99+2]=0x9a;
++ bus.clearLog();
++ bus.checkedWaits.push_back(freeink::BusyWaitStatus::TimedOut);
++ auto timeout=d.displayWindowChecked(bus,fb.data(),nullptr,16,10,16,2,false);
++ assert(!timeout.succeeded() && timeout.error==freeink::DisplayUpdateError::BusyTimeout);
++ const size_t refresh=firstCommand(bus,0x12);
++ assert(refresh+1==bus.writes.size());
++ assert(d.windowBaselineState()==freeink::WindowBaselineState::Invalid);
++
++ // A checked timeout latches every legacy UC8253 bus entry point closed, even
++ // after BUSY returns idle. Only a successful checked full resync unlocks them.
++ bus.busy=true; bus.clearLog();
++ assert(!d.checkedDisplayReady(bus));
++ auto notReady=d.displayChecked(bus,fb.data(),nullptr,freeink::RefreshMode::Fast,false);
++ assert(notReady.error==freeink::DisplayUpdateError::BusyNotReady);
++ assert(bus.writes.empty());
++ d.display(bus,fb.data(),nullptr,freeink::RefreshMode::Fast,false);
++ assert(!d.displayStart(bus,fb.data(),nullptr,freeink::RefreshMode::Fast,false));
++ d.displayFinish(bus,fb.data());
++ d.displayGrayscaleBase(bus,fb.data(),freeink::RefreshMode::Half,false);
++ d.preconditionGrayscale(bus,16,10,16,2);
++ d.copyGrayscaleLsb(bus,fb.data());
++ d.copyGrayscaleMsb(bus,fb.data());
++ d.writeGrayscalePlaneStrip(bus,freeink::GrayPlane::Lsb,fb.data(),10,2);
++ d.displayGray(bus,fb.data(),false,nullptr,false);
++ d.cleanupGrayscaleBuffers(bus,fb.data());
++ d.grayscaleRevert(bus,fb.data());
++ d.deepSleep(bus);
++ assert(bus.writes.empty());
++
++ bus.busy=false; bus.clearLog();
++ d.display(bus,fb.data(),nullptr,freeink::RefreshMode::Fast,false);
++ d.displayGrayscaleBase(bus,fb.data(),freeink::RefreshMode::Half,false);
++ d.deepSleep(bus);
++ assert(bus.writes.empty());
++
++ // A failed checked recovery leaves the latch authoritative.
++ bus.checkedWaits.push_back(freeink::BusyWaitStatus::TimedOut);
++ auto recoveryTimeout=d.displayChecked(bus,fb.data(),nullptr,freeink::RefreshMode::Fast,false);
++ assert(recoveryTimeout.error==freeink::DisplayUpdateError::BusyTimeout);
++ bus.clearLog();
++ d.display(bus,fb.data(),nullptr,freeink::RefreshMode::Fast,false);
++ d.deepSleep(bus);
++ assert(bus.writes.empty());
++
++ // Recovery is a full resync and successful completion re-enables legacy paths.
++ auto recovered=d.displayChecked(bus,fb.data(),nullptr,freeink::RefreshMode::Fast,false);
++ assert(recovered.succeeded() && recovered.actualKind==freeink::DisplayUpdateKind::Full);
++ assert(d.windowBaselineState()==freeink::WindowBaselineState::Valid);
++ bus.clearLog();
++ d.display(bus,fb.data(),nullptr,freeink::RefreshMode::Fast,false);
++ assert(!bus.writes.empty());
++ bus.clearLog();
++ auto restoredBaseline=d.displayChecked(bus,fb.data(),nullptr,freeink::RefreshMode::Fast,false);
++ assert(restoredBaseline.succeeded());
++
++ // A POF timeout makes power state conservative; recovery sends PON explicitly.
++ bus.clearLog();
++ bus.checkedWaits.push_back(freeink::BusyWaitStatus::Ready);
++ bus.checkedWaits.push_back(freeink::BusyWaitStatus::TimedOut);
++ auto powerOffTimeout=d.displayWindowChecked(bus,fb.data(),nullptr,16,10,16,2,true);
++ assert(powerOffTimeout.error==freeink::DisplayUpdateError::BusyTimeout);
++ assert(powerOffTimeout.actualKind==freeink::DisplayUpdateKind::Window);
++ assert(!bus.writes.empty() && bus.writes.back().command==0x02);
++ bus.clearLog();
++ auto afterPowerOffTimeout=d.displayChecked(bus,fb.data(),nullptr,freeink::RefreshMode::Fast,false);
++ assert(afterPowerOffTimeout.succeeded());
++ assert(firstCommand(bus,0x04)<firstCommand(bus,0x12));
++
++ // A timeout before DRF reports no actual presentation and aborts at PON.
++ bus.clearLog();
++ auto powerOff=d.displayWindowChecked(bus,fb.data(),nullptr,16,10,16,2,true);
++ assert(powerOff.succeeded());
++ bus.clearLog();
++ bus.checkedWaits.push_back(freeink::BusyWaitStatus::TimedOut);
++ auto powerTimeout=d.displayChecked(bus,fb.data(),nullptr,freeink::RefreshMode::Fast,false);
++ assert(powerTimeout.error==freeink::DisplayUpdateError::BusyTimeout);
++ assert(powerTimeout.actualKind==freeink::DisplayUpdateKind::None);
++ assert(!bus.writes.empty() && bus.writes.back().command==0x04);
++
++ // The generic checked-operation guard suppresses writes after a legacy wait timeout.
++ ContinuingDriver continuing;
++ uint8_t pixel=0xff;
++ bus.clearLog();
++ bus.checkedWaits.push_back(freeink::BusyWaitStatus::TimedOut);
++ auto guarded=continuing.displayChecked(bus,&pixel,nullptr,freeink::RefreshMode::Fast,false);
++ assert(guarded.error==freeink::DisplayUpdateError::BusyTimeout);
++ assert(bus.writes.size()==1 && bus.writes.front().command==0x12);
++
++ // Invalid geometry never reaches the bus.
++ bus.busy=false;
++ bus.clearLog();
++ auto invalid=d.displayWindowChecked(bus,fb.data(),nullptr,3,10,16,2,false);
++ assert(invalid.error==freeink::DisplayUpdateError::InvalidRegion);
++ assert(bus.writes.empty());
+  std::cout << "PASS: UC8253 cold power-on, warm Full, and power-off/wake\\n";
++ std::cout << "PASS: UC8253 checked window protocol, timeout, and recovery\\n";
+ }
+ """)
+     exe = root / "test_uc8253_power"
+diff --git a/libs/display/FreeInkDisplay/test/host/run_uc8279.py b/libs/display/FreeInkDisplay/test/host/run_uc8279.py
+index 7427b650bfd5891b9e060d28d0fbaee2a2d6ce66..da63723cad038f938ab449c267294a08cea517cf 100644
+--- a/libs/display/FreeInkDisplay/test/host/run_uc8279.py
++++ b/libs/display/FreeInkDisplay/test/host/run_uc8279.py
+@@ -16,8 +16,11 @@ with tempfile.TemporaryDirectory(prefix="uc8279-test-") as directory:
+         shutil.copy2(SOURCE / "driver" / name, root / "driver" / name)
+     shutil.copy2(SOURCE / "lut/Uc8279X3Luts.h", root / "lut/Uc8279X3Luts.h")
+     shutil.copy2(SOURCE.parent / "include/GrayscaleCapabilities.h", root / "GrayscaleCapabilities.h")
++    shutil.copy2(SOURCE.parent / "include/DisplayUpdateResult.h", root / "DisplayUpdateResult.h")
+     panel = root / "driver/PanelDriver.h"
+-    panel.write_text(panel.read_text().replace("../../include/GrayscaleCapabilities.h", "../GrayscaleCapabilities.h"))
++    panel.write_text(panel.read_text()
++                     .replace("../../include/GrayscaleCapabilities.h", "../GrayscaleCapabilities.h")
++                     .replace("../../include/DisplayUpdateResult.h", "../DisplayUpdateResult.h"))
+     (root / "Arduino.h").write_text('''#pragma once
+ #include <cstdint>
+ #include <cstddef>
+@@ -44,6 +47,8 @@ class EpdBus {
+   uint8_t command=0;
+ public:
+   std::vector<uint8_t> oldPlane, newPlane, lastBank, rawRegisters, lastBwBank;
++  void beginCheckedOperation() {}
++  bool endCheckedOperation() { return true; }
+   void cmd(uint8_t c) { command=c; }
+   void data(uint8_t) {}
+   void data(const uint8_t* p, size_t n) {

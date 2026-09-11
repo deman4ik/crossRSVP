@@ -6,6 +6,9 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <RsvpModeSwitch.h>
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+#include <RsvpWindowReport.h>
+#endif
 
 #include <algorithm>
 #if defined(SIMULATOR)
@@ -55,6 +58,153 @@ bool isSkippableNonTextPause(const rsvp::PauseReason reason) {
   return reason == rsvp::PauseReason::Image || reason == rsvp::PauseReason::Table ||
          reason == rsvp::PauseReason::HorizontalRule || reason == rsvp::PauseReason::OtherContent;
 }
+
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+constexpr char WINDOW_REPORT_PATH[] = "/.crosspoint/rsvp-window-test.csv";
+
+GfxRenderer::LogicalRegion unionRegions(const GfxRenderer::LogicalRegion& lhs, const GfxRenderer::LogicalRegion& rhs) {
+  const int32_t left = std::min(lhs.x, rhs.x);
+  const int32_t top = std::min(lhs.y, rhs.y);
+  const int32_t right = std::max(lhs.x + lhs.width, rhs.x + rhs.width);
+  const int32_t bottom = std::max(lhs.y + lhs.height, rhs.y + rhs.height);
+  return {left, top, right - left, bottom - top};
+}
+
+rsvp::WindowActualRefresh actualRefresh(const HalDisplay::DisplayUpdateKind kind) {
+  switch (kind) {
+    case HalDisplay::DisplayUpdateKind::Window:
+      return rsvp::WindowActualRefresh::Window;
+    case HalDisplay::DisplayUpdateKind::Full:
+      return rsvp::WindowActualRefresh::Full;
+    case HalDisplay::DisplayUpdateKind::Cleanup:
+      return rsvp::WindowActualRefresh::Cleanup;
+    case HalDisplay::DisplayUpdateKind::None:
+      return rsvp::WindowActualRefresh::None;
+  }
+  return rsvp::WindowActualRefresh::None;
+}
+
+rsvp::WindowFallback windowFallback(const HalDisplay::DisplayUpdateResult& result) {
+  if (result.error == HalDisplay::DisplayUpdateError::BusyTimeout) return rsvp::WindowFallback::BusyTimeout;
+  if (result.error == HalDisplay::DisplayUpdateError::InvalidRegion) return rsvp::WindowFallback::InvalidGeometry;
+  if (result.error != HalDisplay::DisplayUpdateError::None) return rsvp::WindowFallback::ControllerError;
+  switch (result.fallback) {
+    case HalDisplay::DisplayUpdateFallback::None:
+      return rsvp::WindowFallback::None;
+    case HalDisplay::DisplayUpdateFallback::ExperimentalDisabled:
+      return rsvp::WindowFallback::CandidateDisabled;
+    case HalDisplay::DisplayUpdateFallback::UnsupportedModel:
+      return rsvp::WindowFallback::UnsupportedModel;
+    case HalDisplay::DisplayUpdateFallback::UnsupportedController:
+    case HalDisplay::DisplayUpdateFallback::UnsupportedDriver:
+      return rsvp::WindowFallback::UnsupportedController;
+    case HalDisplay::DisplayUpdateFallback::InconclusiveController:
+      return rsvp::WindowFallback::InconclusiveController;
+    case HalDisplay::DisplayUpdateFallback::Inverted:
+      return rsvp::WindowFallback::Inverted;
+    case HalDisplay::DisplayUpdateFallback::BaselineInvalid:
+    case HalDisplay::DisplayUpdateFallback::RefreshPromoted:
+      return rsvp::WindowFallback::InvalidBaseline;
+  }
+  return rsvp::WindowFallback::ControllerError;
+}
+
+const char* controllerName(const HalDisplay::Controller controller) {
+  switch (controller) {
+    case HalDisplay::Controller::UC8253:
+      return "uc8253";
+    case HalDisplay::Controller::UC8279:
+      return "uc8279";
+    case HalDisplay::Controller::UC8179:
+      return "uc8179";
+    default:
+      return "other";
+  }
+}
+
+const char* confidenceName(const HalDisplay::ControllerConfidence confidence) {
+  switch (confidence) {
+    case HalDisplay::ControllerConfidence::Confirmed:
+      return "confirmed";
+    case HalDisplay::ControllerConfidence::Assumed:
+      return "assumed";
+    case HalDisplay::ControllerConfidence::Inconclusive:
+      return "inconclusive";
+  }
+  return "inconclusive";
+}
+
+const char* confidenceDisplayName(const HalDisplay::ControllerConfidence confidence) {
+  switch (confidence) {
+    case HalDisplay::ControllerConfidence::Confirmed:
+      return tr(STR_RSVP_WINDOW_CONFIDENCE_CONFIRMED);
+    case HalDisplay::ControllerConfidence::Assumed:
+      return tr(STR_RSVP_WINDOW_CONFIDENCE_ASSUMED);
+    case HalDisplay::ControllerConfidence::Inconclusive:
+      return tr(STR_RSVP_WINDOW_CONFIDENCE_INCONCLUSIVE);
+  }
+  return tr(STR_RSVP_WINDOW_CONFIDENCE_INCONCLUSIVE);
+}
+
+const char* fallbackDisplayName(const rsvp::WindowFallback fallback) {
+  switch (fallback) {
+    case rsvp::WindowFallback::None:
+      return tr(STR_RSVP_WINDOW_FALLBACK_NONE);
+    case rsvp::WindowFallback::CandidateDisabled:
+      return tr(STR_RSVP_WINDOW_FALLBACK_DISABLED);
+    case rsvp::WindowFallback::UnsupportedModel:
+      return tr(STR_RSVP_WINDOW_FALLBACK_MODEL);
+    case rsvp::WindowFallback::UnsupportedController:
+      return tr(STR_RSVP_WINDOW_FALLBACK_CONTROLLER);
+    case rsvp::WindowFallback::InconclusiveController:
+      return tr(STR_RSVP_WINDOW_FALLBACK_INCONCLUSIVE);
+    case rsvp::WindowFallback::Inverted:
+      return tr(STR_RSVP_WINDOW_FALLBACK_INVERTED);
+    case rsvp::WindowFallback::InvalidGeometry:
+      return tr(STR_RSVP_WINDOW_FALLBACK_GEOMETRY);
+    case rsvp::WindowFallback::InvalidBaseline:
+      return tr(STR_RSVP_WINDOW_FALLBACK_BASELINE);
+    case rsvp::WindowFallback::BusyTimeout:
+      return tr(STR_RSVP_WINDOW_FALLBACK_TIMEOUT);
+    case rsvp::WindowFallback::ControllerError:
+      return tr(STR_RSVP_WINDOW_FALLBACK_ERROR);
+  }
+  return tr(STR_RSVP_WINDOW_FALLBACK_ERROR);
+}
+
+const char* orientationName(const GfxRenderer::Orientation orientation) {
+  switch (orientation) {
+    case GfxRenderer::Orientation::Portrait:
+      return "portrait";
+    case GfxRenderer::Orientation::LandscapeClockwise:
+      return "landscape_cw";
+    case GfxRenderer::Orientation::PortraitInverted:
+      return "portrait_inverted";
+    case GfxRenderer::Orientation::LandscapeCounterClockwise:
+      return "landscape_ccw";
+  }
+  return "unknown";
+}
+
+uint16_t observedCpuMhz() {
+#if defined(SIMULATOR)
+  return 0;  // The simulator exposes no CPU-frequency model.
+#else
+  return static_cast<uint16_t>(getCpuFrequencyMhz());
+#endif
+}
+
+class HalFileReportSink final : public rsvp::WindowReportSink {
+ public:
+  explicit HalFileReportSink(HalFile& file) : file(file) {}
+  bool write(const char* data, const size_t size) override {
+    return file.write(reinterpret_cast<const uint8_t*>(data), size) == size;
+  }
+
+ private:
+  HalFile& file;
+};
+#endif
 }  // namespace
 
 bool RsvpReaderActivity::loadBook() {
@@ -116,6 +266,7 @@ bool RsvpReaderActivity::loadBook() {
   }
   if (switchToPagedPending) return true;
 
+#if !defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) || !CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
   contentProvider = makeUniqueNoThrow<rsvp::ArduinoEpubContentProvider>(*epub);
   if (!contentProvider) {
     LOG_ERR("RSVP", "Failed to allocate EPUB content provider");
@@ -126,18 +277,46 @@ bool RsvpReaderActivity::loadBook() {
     LOG_ERR("RSVP", "Failed to allocate visible EPUB stream");
     return enterFatalFallback(rsvp::Error::SourceOpen);
   }
+#endif
   rsvp::RsvpPacingConfig pacing;
   pacing.paceWpm = SETTINGS.rsvpPaceWpm;
   pacing.maximumWpm = pacing.safeMaximumWpm = CrossPointSettings::rsvpMaximumPaceWpm();
+#ifdef CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS
+  pacing.paceWpm = rsvp::RsvpSpeedProbe::DEFAULT_WPM;
+  pacing.minimumWpm = rsvp::RsvpSpeedProbe::MINIMUM_WPM;
+  pacing.maximumWpm = pacing.safeMaximumWpm = rsvp::RsvpSpeedProbe::MAXIMUM_WPM;
+  pacing.paceStepWpm = rsvp::RsvpSpeedProbe::STEP_WPM;
+#endif
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  pacing.paceWpm = rsvp::RsvpWindowBenchmark::PACE_WPM;
+  pacing.minimumWpm = rsvp::RsvpWindowBenchmark::PACE_WPM;
+  pacing.maximumWpm = pacing.safeMaximumWpm = rsvp::RsvpWindowBenchmark::PACE_WPM;
+  pacing.paceStepWpm = 1;
+  windowReturnAnchor = initialAnchor;
+#endif
   pacing.clausePausePercent = static_cast<uint16_t>(SETTINGS.rsvpClausePauseTenths) * 10;
   pacing.sentencePausePercent = static_cast<uint16_t>(SETTINGS.rsvpSentencePauseTenths) * 10;
   pacing.paragraphPausePercent = static_cast<uint16_t>(SETTINGS.rsvpParagraphPauseTenths) * 10;
-  const bool groupingEnabled = prepareGroupingFonts();
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  windowPacing = pacing;
+#endif
+  const bool groupingEnabled =
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+      false;
+#else
+      prepareGroupingFonts();
+#endif
   const auto storedGroupingChoice =
       static_cast<rsvp::GroupingLanguageChoice>(static_cast<uint8_t>(epub->getGroupingLanguagePreference().load()));
   const auto groupingLanguage = rsvp::resolveGroupingLanguage(storedGroupingChoice, epub->getLanguage());
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  session = makeUniqueNoThrow<rsvp::RsvpSession>(windowFixtureSource, rsvp::ResumeAnchor{}, pacing, groupingEnabled,
+                                                 &RsvpReaderActivity::fitPresentationGroup, this, groupingLanguage);
+  checkpointWritesDisabled = true;
+#else
   session = makeUniqueNoThrow<rsvp::RsvpSession>(*source, initialAnchor, pacing, groupingEnabled,
                                                  &RsvpReaderActivity::fitPresentationGroup, this, groupingLanguage);
+#endif
   if (!session) {
     LOG_ERR("RSVP", "Failed to allocate session");
     return enterFatalFallback(rsvp::Error::SourceOpen);
@@ -153,9 +332,17 @@ bool RsvpReaderActivity::loadBook() {
     }
   }
   LOG_INF("RSVP", "short-word-grouping=%s", groupingEnabled ? "on" : "off");
+#ifdef CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS
+  LOG_INF("RSVP-SPEED", "config version=%s cap=%u grouping=%u clause=%u sentence=%u paragraph=%u", CROSSPOINT_VERSION,
+          rsvp::RsvpSpeedProbe::MAXIMUM_WPM, groupingEnabled ? 1u : 0u, pacing.clausePausePercent,
+          pacing.sentencePausePercent, pacing.paragraphPausePercent);
+#endif
 
+#if !defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) || !CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
   if (restoredFromCheckpoint) session->restoreAfterCheckpoint(restoredTokenHash32, restoredTokenLength);
+#endif
   currentDecision = session->step({.nowMs = millis()});
+#if !defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) || !CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
   if (restoredFromCheckpoint && !session->checkpointIdentityValidated()) {
     LOG_INF("RSVP", "Checkpoint token identity no longer resolves; returning to Paged progress");
     currentDecision = {};
@@ -164,6 +351,7 @@ bool RsvpReaderActivity::loadBook() {
     invalidateCheckpointOnNativeFallback = true;
     return true;
   }
+#endif
   if (!currentDecision.render && currentDecision.pauseReason == rsvp::PauseReason::None &&
       currentDecision.state != rsvp::State::Finished) {
     LOG_ERR("RSVP", "No readable first token (state=%d error=%d)", static_cast<int>(currentDecision.state),
@@ -224,6 +412,17 @@ void RsvpReaderActivity::applySettings() {
   rsvp::RsvpPacingConfig pacing;
   pacing.paceWpm = SETTINGS.rsvpPaceWpm;
   pacing.maximumWpm = pacing.safeMaximumWpm = CrossPointSettings::rsvpMaximumPaceWpm();
+#ifdef CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS
+  pacing.paceWpm = currentDecision.paceWpm;
+  pacing.minimumWpm = rsvp::RsvpSpeedProbe::MINIMUM_WPM;
+  pacing.maximumWpm = pacing.safeMaximumWpm = rsvp::RsvpSpeedProbe::MAXIMUM_WPM;
+  pacing.paceStepWpm = rsvp::RsvpSpeedProbe::STEP_WPM;
+#endif
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  pacing = windowPacing;
+  renderer.invalidateWindowBaseline();
+  presentedRegionValid = false;
+#endif
   pacing.clausePausePercent = static_cast<uint16_t>(SETTINGS.rsvpClausePauseTenths) * 10;
   pacing.sentencePausePercent = static_cast<uint16_t>(SETTINGS.rsvpSentencePauseTenths) * 10;
   pacing.paragraphPausePercent = static_cast<uint16_t>(SETTINGS.rsvpParagraphPauseTenths) * 10;
@@ -231,12 +430,109 @@ void RsvpReaderActivity::applySettings() {
     const auto storedGroupingChoice =
         static_cast<rsvp::GroupingLanguageChoice>(static_cast<uint8_t>(epub->getGroupingLanguagePreference().load()));
     const auto groupingLanguage = rsvp::resolveGroupingLanguage(storedGroupingChoice, epub->getLanguage());
-    applyDecision(session->configureWhilePaused(pacing, prepareGroupingFonts(), groupingLanguage));
+    applyDecision(session->configureWhilePaused(pacing,
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+                                                false,
+#else
+                                                prepareGroupingFonts(),
+#endif
+                                                groupingLanguage));
   }
   if (controlPanel) controlPanel->begin();
   currentDecision.render = true;
   requestUpdate();
 }
+
+void RsvpReaderActivity::openSettings() {
+  auto settings = makeUniqueNoThrow<SettingsActivity>(renderer, mappedInput, true, epub->getCachePath());
+  if (!settings) {
+    LOG_ERR("RSVP", "OOM: settings activity");
+    return;
+  }
+  onSystemModalOpening();
+  startActivityForResult(std::move(settings), [this](const ActivityResult&) { applySettings(); });
+}
+
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+bool RsvpReaderActivity::restartWindowDiagnostic(const uint32_t nowMs) {
+  renderer.setExperimentalWindowUpdates(windowBenchmark.windowCandidateEnabled());
+  renderer.invalidateWindowBaseline();
+  presentedRegionValid = false;
+  drawnRegionValid = false;
+  windowHeaderCpuMhz = observedCpuMhz();
+  session.reset();
+  session = makeUniqueNoThrow<rsvp::RsvpSession>(windowFixtureSource, rsvp::ResumeAnchor{}, windowPacing, false,
+                                                 &RsvpReaderActivity::fitPresentationGroup, this,
+                                                 rsvp::GroupingLanguage::English);
+  if (!session) {
+    windowBenchmark.fail(nowMs);
+    windowDiagnosticRunActive.store(false, std::memory_order_release);
+    windowReportPending = true;
+    return false;
+  }
+  currentDecision = session->step({.nowMs = nowMs});
+  windowAutoPlayPending = true;
+  panelVisible = false;
+  currentDecision.render = true;
+  requestUpdate();
+  return true;
+}
+
+void RsvpReaderActivity::startWindowDiagnostic(const uint32_t nowMs) {
+  windowDiagnosticStarted = true;
+  windowReportSaved = false;
+  windowReportFailed = false;
+  checkedDisplayFailure.store(false, std::memory_order_release);
+  windowDiagnosticRunActive.store(true, std::memory_order_release);
+  windowBenchmark.start(nowMs);
+  restartWindowDiagnostic(nowMs);
+}
+
+void RsvpReaderActivity::updateWindowDiagnostic(const uint32_t nowMs) {
+  if (windowBenchmark.currentPhase() == rsvp::WindowBenchmarkPhase::Complete) {
+    finishWindowDiagnostic(false, nowMs);
+    return;
+  }
+  restartWindowDiagnostic(nowMs);
+}
+
+void RsvpReaderActivity::finishWindowDiagnostic(const bool aborted, const uint32_t nowMs) {
+  if (aborted) windowBenchmark.abort(nowMs);
+  windowDiagnosticRunActive.store(false, std::memory_order_release);
+  renderer.setExperimentalWindowUpdates(false);
+  renderer.invalidateWindowBaseline();
+  presentedRegionValid = false;
+  windowAutoPlayPending = false;
+  if (session && currentDecision.state == rsvp::State::Playing) {
+    applyDecision(session->step({.nowMs = nowMs, .action = rsvp::Action::TogglePlayback}));
+  }
+  panelVisible = false;
+  windowReportPending = true;
+  currentDecision.render = true;
+  requestUpdate();
+}
+
+bool RsvpReaderActivity::writeWindowDiagnosticReport() {
+  if (!Storage.ensureDirectoryExists("/.crosspoint")) return false;
+  HalFile file;
+  if (!Storage.openFileForWrite("RSVP-WINDOW", WINDOW_REPORT_PATH, file)) return false;
+  const auto detection = renderer.controllerDetection();
+  HalFileReportSink sink(file);
+  const bool wrote = rsvp::writeRsvpWindowReport(sink, windowBenchmark,
+                                                 {.controller = controllerName(detection.controller),
+                                                  .confidence = confidenceName(detection.confidence),
+                                                  .orientation = orientationName(renderer.getOrientation()),
+                                                  .power = "not_sampled",
+                                                  .targetWpm = rsvp::RsvpWindowBenchmark::PACE_WPM});
+  file.flush();
+  return file.close() && wrote;
+}
+
+void RsvpReaderActivity::setDrawnRegion(const int left, const int top, const int right, const int bottom) {
+  drawnRegion = {left, top, right - left, bottom - top};
+  drawnRegionValid = drawnRegion.width > 0 && drawnRegion.height > 0;
+}
+#endif
 
 void RsvpReaderActivity::loop() {
   if (fatalFallbackReady.exchange(false)) {
@@ -244,7 +540,50 @@ void RsvpReaderActivity::loop() {
     switchToPaged();
     return;
   }
-  if (switchToPagedPending) {
+
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  {
+    RenderLock diagnosticLock(false);
+    if (diagnosticLock.ownsLock()) {
+      if (windowAbortRequested && windowBenchmark.running()) {
+        windowAbortRequested = false;
+        finishWindowDiagnostic(true, millis());
+        return;
+      }
+      if (windowStartRequested && !windowBenchmark.running() &&
+          !checkedDisplayFailure.load(std::memory_order_acquire)) {
+        windowStartRequested = false;
+        startWindowDiagnostic(millis());
+        return;
+      }
+      if (windowReportPending) {
+        windowReportPending = false;
+        windowReportSaved = writeWindowDiagnosticReport();
+        windowReportFailed = !windowReportSaved;
+        currentDecision.render = true;
+        requestUpdate();
+      }
+      if (checkedDisplayFailure.load(std::memory_order_acquire) && renderer.checkedDisplayReady()) {
+        currentDecision.render = true;
+        requestUpdate();
+      }
+      if (windowBenchmark.running() && windowBenchmark.update(millis())) {
+        updateWindowDiagnostic(millis());
+        return;
+      }
+    }
+  }
+  if (windowSettingsRequested && !checkedDisplayFailure.load(std::memory_order_acquire)) {
+    windowSettingsRequested = false;
+    openSettings();
+    return;
+  }
+#endif
+  if (switchToPagedPending
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+      && !checkedDisplayFailure.load(std::memory_order_acquire)
+#endif
+  ) {
     switchToPaged();
     return;
   }
@@ -293,14 +632,17 @@ void RsvpReaderActivity::loop() {
           action = rsvp::Action::ModeSwitch;
           break;
         case RsvpControlPanelUi::Event::Settings: {
+#if !defined(CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS) && \
+    (!defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) || !CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC)
           SETTINGS.rsvpPaceWpm = currentDecision.paceWpm;
-          auto settings = makeUniqueNoThrow<SettingsActivity>(renderer, mappedInput, true, epub->getCachePath());
-          if (!settings) {
-            LOG_ERR("RSVP", "OOM: settings activity");
+#endif
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+          if (checkedDisplayFailure.load(std::memory_order_acquire)) {
+            windowSettingsRequested = true;
             return;
           }
-          onSystemModalOpening();
-          startActivityForResult(std::move(settings), [this](const ActivityResult&) { applySettings(); });
+#endif
+          openSettings();
         }
           return;
         case RsvpControlPanelUi::Event::None:
@@ -334,6 +676,21 @@ void RsvpReaderActivity::loop() {
   if (wordDoesNotFitPending.exchange(false)) {
     if (!pendingActions.push(rsvp::Action::WordDoesNotFit)) LOG_ERR("RSVP", "Pending action buffer full");
   }
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  const bool windowConfirmLongPressed =
+      currentDecision.state != rsvp::State::Playing &&
+      mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, ReaderUtils::SKIP_HOLD_MS);
+  if (windowConfirmLongPressed && !windowBenchmark.running()) {
+    windowStartRequested = true;
+    return;
+  }
+  const bool windowConfirmReleased =
+      windowBenchmark.running() && mappedInput.wasReleased(MappedInputManager::Button::Confirm);
+  if (windowConfirmReleased) {
+    windowAbortRequested = true;
+    return;
+  }
+#endif
   if (mappedInput.wasLongPressed(MappedInputManager::Button::Back, ReaderUtils::GO_BACK_OR_HOME_MS)) {
     if (!pendingActions.push(rsvp::Action::Exit)) LOG_ERR("RSVP", "Pending action buffer full");
   } else {
@@ -341,12 +698,21 @@ void RsvpReaderActivity::loop() {
       if (triggered && !pendingActions.push(action)) LOG_ERR("RSVP", "Pending action buffer full");
     };
     queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::Back), rsvp::Action::ModeSwitch);
+#if !defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) || !CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
     queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::Confirm), rsvp::Action::TogglePlayback);
+#endif
     queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::Left), rsvp::Action::PaceDown);
     queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::Right), rsvp::Action::PaceUp);
     queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::PageBack), rsvp::Action::RewindFive);
     queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::PageForward), rsvp::Action::StepForward);
   }
+
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  // Inputs above remain queued while a failed checked update owns an
+  // unverified controller. Activity transitions and modal redraws resume only
+  // after the locked readiness path clears this latch.
+  if (checkedDisplayFailure.load(std::memory_order_acquire)) return;
+#endif
 
   if (checkpointRequestedFromRender.load(std::memory_order_acquire)) {
     RenderLock lock(false);
@@ -379,9 +745,11 @@ void RsvpReaderActivity::loop() {
               static_cast<unsigned>(decision.state));
     }
 #endif
+#if !defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) || !CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
     if (decision.checkpointRequested && !saveCheckpoint()) {
       LOG_ERR("RSVP", "Failed to save RSVP checkpoint");
     }
+#endif
     applyDecision(decision);
     if (decision.state == rsvp::State::Finished && !finalizeCompletedBook()) {
       LOG_ERR("RSVP", "Failed to finalize completed book progress");
@@ -450,6 +818,14 @@ bool RsvpReaderActivity::finalizeCompletedBook() {
 }
 
 void RsvpReaderActivity::switchToPaged() {
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  renderer.setExperimentalWindowUpdates(false);
+  renderer.invalidateWindowBaseline();
+  activityManager.goToReader(
+      bookPath, false,
+      ReaderLaunchContext{ReaderLaunchMode::Paged, windowReturnAnchor, false, 0, 0, false, false, bookRevision});
+  return;
+#endif
   if (switchToNativeProgress) {
     checkpointWritesDisabled = true;
     bool checkpointInvalidationPending = false;
@@ -475,6 +851,11 @@ void RsvpReaderActivity::switchToPaged() {
 }
 
 void RsvpReaderActivity::onExit() {
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  renderer.setExperimentalWindowUpdates(false);
+  renderer.invalidateWindowBaseline();
+  presentedRegionValid = false;
+#endif
   if (currentDecision.state == rsvp::State::Finished) {
     if (!finalizeCompletedBook()) LOG_ERR("RSVP", "Failed to finalize completed book on exit");
   } else if (!checkpointWritesDisabled) {
@@ -484,6 +865,11 @@ void RsvpReaderActivity::onExit() {
 }
 
 void RsvpReaderActivity::applyDecision(const rsvp::Decision& decision) {
+#ifdef CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS
+  if (decision.state != currentDecision.state || decision.paceWpm != currentDecision.paceWpm) {
+    speedProbe.interrupt();
+  }
+#endif
   const bool visualStateChanged = decision.state != currentDecision.state ||
                                   decision.paceWpm != currentDecision.paceWpm ||
                                   decision.pauseReason != currentDecision.pauseReason;
@@ -512,6 +898,10 @@ void RsvpReaderActivity::onSystemModalOpening() {
     applyDecision(session->step({.nowMs = millis(), .action = rsvp::Action::TogglePlayback}));
   }
   currentDecision.render = true;
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  renderer.invalidateWindowBaseline();
+  presentedRegionValid = false;
+#endif
   if (controlPanel) panelVisible = true;
 #if defined(SIMULATOR)
   LOG_INF("RSVP", "system_modal_pause state=%u", static_cast<unsigned>(currentDecision.state));
@@ -613,6 +1003,9 @@ rsvp::GroupRange RsvpReaderActivity::fitPresentationGroup(void* context, const r
 }
 
 bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word, const rsvp::PresentationGroup* group) {
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  drawnRegionValid = false;
+#endif
   if (!measurePresentationGroup(word, group)) return false;
   // Membership was resolved by the session before source consumption.
   if (group && (groupLayout.begin != 0 || groupLayout.end != group->count)) return false;
@@ -627,11 +1020,24 @@ bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word, const 
   const int reservedBottom = controlPanel ? controlPanel->reservedHeight() : 0;
   const int y = marginTop + (usableBottom - reservedBottom - marginTop - lineHeight) / 2;
   const int companionY = y + (lineHeight - renderer.getLineHeight(companionFontId)) / 2;
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  // Advances do not bound arbitrary SD-font ink overhangs. Use the complete
+  // RSVP line width and only narrow vertically; this remains bounded while
+  // guaranteeing that old and new companion/active glyph tails are covered.
+  int regionLeft = groupLayoutInput.leftBound;
+  int regionRight = groupLayoutInput.rightBound;
+  int regionTop = y;
+  int regionBottom = y + lineHeight;
+#endif
   if (group) {
     for (uint8_t index = 0; index < group->count; ++index) {
       if (index == group->activeIndex) continue;
       renderer.drawText(companionFontId, groupLayout.positions[index], companionY, group->tokens[index].text, true,
                         EpdFontFamily::REGULAR);
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+      regionTop = std::min(regionTop, companionY);
+      regionBottom = std::max(regionBottom, companionY + renderer.getLineHeight(companionFontId));
+#endif
     }
   }
   renderer.drawText(activeFontId, groupLayout.active.prefixX, y, prefixBuffer, true, EpdFontFamily::REGULAR);
@@ -640,10 +1046,22 @@ bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word, const 
 
   if (SETTINGS.rsvpGuideStyle != CrossPointSettings::RSVP_GUIDES_OFF) {
     const int focusX = groupLayoutInput.focusX;
-    renderer.drawLine(focusX, std::max(marginTop, y - 22), focusX, std::max(marginTop, y - 8), 2, true);
-    renderer.drawLine(focusX, std::min(usableBottom - 1, y + lineHeight + 8), focusX,
-                      std::min(usableBottom - 1, y + lineHeight + 22), 2, true);
+    const int upperTop = std::max(marginTop, y - 22);
+    const int upperBottom = std::max(marginTop, y - 8);
+    const int lowerTop = std::min(usableBottom - 1, y + lineHeight + 8);
+    const int lowerBottom = std::min(usableBottom - 1, y + lineHeight + 22);
+    renderer.drawLine(focusX, upperTop, focusX, upperBottom, 2, true);
+    renderer.drawLine(focusX, lowerTop, focusX, lowerBottom, 2, true);
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+    regionTop = std::min(regionTop, upperTop);
+    regionBottom = std::max(regionBottom, lowerBottom + 1);
+#endif
   }
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  static constexpr int REGION_PADDING = 12;
+  setDrawnRegion(regionLeft - REGION_PADDING, regionTop - REGION_PADDING, regionRight + REGION_PADDING,
+                 regionBottom + REGION_PADDING);
+#endif
   return true;
 }
 
@@ -667,18 +1085,115 @@ const char* RsvpReaderActivity::pauseMessage() const {
 }
 
 void RsvpReaderActivity::drawStatus() const {
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  char status[128];
+  const char* phaseText = tr(STR_RSVP_WINDOW_READY);
+  switch (windowBenchmark.currentPhase()) {
+    case rsvp::WindowBenchmarkPhase::FullWarmup:
+      phaseText = tr(STR_RSVP_WINDOW_FULL_WARMUP);
+      break;
+    case rsvp::WindowBenchmarkPhase::FullMeasurement:
+      phaseText = tr(STR_RSVP_WINDOW_FULL_RUN);
+      break;
+    case rsvp::WindowBenchmarkPhase::WindowWarmup:
+      phaseText = tr(STR_RSVP_WINDOW_PARTIAL_WARMUP);
+      break;
+    case rsvp::WindowBenchmarkPhase::WindowMeasurement:
+      phaseText = tr(STR_RSVP_WINDOW_PARTIAL_RUN);
+      break;
+    case rsvp::WindowBenchmarkPhase::Complete:
+      phaseText = tr(STR_RSVP_WINDOW_COMPLETE);
+      break;
+    case rsvp::WindowBenchmarkPhase::Aborted:
+      phaseText = tr(STR_RSVP_WINDOW_ABORTED);
+      break;
+    case rsvp::WindowBenchmarkPhase::Error:
+      phaseText = tr(STR_RSVP_WINDOW_ERROR);
+      break;
+    case rsvp::WindowBenchmarkPhase::Idle:
+      break;
+  }
+  renderer.drawCenteredText(SMALL_FONT_ID, 12, phaseText);
+  const auto detection = renderer.controllerDetection();
+  const uint16_t displayedCpuMhz = windowBenchmark.running() ? windowHeaderCpuMhz : observedCpuMhz();
+  if (displayedCpuMhz == 0) {
+    snprintf(status, sizeof(status), tr(STR_RSVP_WINDOW_CONTROLLER_NO_CPU), controllerName(detection.controller),
+             confidenceDisplayName(detection.confidence));
+  } else {
+    snprintf(status, sizeof(status), tr(STR_RSVP_WINDOW_CONTROLLER), controllerName(detection.controller),
+             confidenceDisplayName(detection.confidence), static_cast<unsigned>(displayedCpuMhz));
+  }
+  renderer.drawCenteredText(SMALL_FONT_ID, 15 + renderer.getLineHeight(SMALL_FONT_ID), status);
+
+  if (!windowBenchmark.running() && windowBenchmark.currentPhase() != rsvp::WindowBenchmarkPhase::Idle) {
+    const auto& full = windowBenchmark.fullStats();
+    const auto& window = windowBenchmark.windowStats();
+    snprintf(status, sizeof(status), tr(STR_RSVP_WINDOW_RESULT_FULL), static_cast<unsigned long>(full.frame.count),
+             static_cast<unsigned long>(full.frame.minimumMs), static_cast<unsigned long>(full.frame.meanMs()),
+             static_cast<unsigned long>(full.frame.maximumMs), static_cast<unsigned long>(full.framesPerMinute()));
+    renderer.drawCenteredText(SMALL_FONT_ID, 18 + renderer.getLineHeight(SMALL_FONT_ID) * 2, status);
+    snprintf(status, sizeof(status), tr(STR_RSVP_WINDOW_RESULT_PARTIAL), static_cast<unsigned long>(window.frame.count),
+             static_cast<unsigned long>(window.frame.minimumMs), static_cast<unsigned long>(window.frame.meanMs()),
+             static_cast<unsigned long>(window.frame.maximumMs), static_cast<unsigned long>(window.framesPerMinute()));
+    renderer.drawCenteredText(SMALL_FONT_ID, 21 + renderer.getLineHeight(SMALL_FONT_ID) * 3, status);
+    const auto fallback = window.fallbackCount != 0 ? window.lastFallback : full.lastFallback;
+    snprintf(status, sizeof(status), tr(STR_RSVP_WINDOW_RESULT_ACTUAL),
+             static_cast<unsigned long>(full.windowCount + window.windowCount),
+             static_cast<unsigned long>(full.fullCount + window.fullCount),
+             static_cast<unsigned long>(full.cleanupCount + window.cleanupCount),
+             static_cast<unsigned long>(full.fallbackCount + window.fallbackCount), fallbackDisplayName(fallback));
+    renderer.drawCenteredText(SMALL_FONT_ID, 24 + renderer.getLineHeight(SMALL_FONT_ID) * 4, status);
+    if (full.cpuSampleCount == 0 && window.cpuSampleCount == 0) {
+      snprintf(status, sizeof(status), "%s", tr(STR_RSVP_WINDOW_RESULT_CPU_UNAVAILABLE));
+    } else {
+      snprintf(status, sizeof(status), tr(STR_RSVP_WINDOW_RESULT_CPU), static_cast<unsigned>(full.minimumCpuMhz),
+               static_cast<unsigned>(full.maximumCpuMhz), static_cast<unsigned>(window.minimumCpuMhz),
+               static_cast<unsigned>(window.maximumCpuMhz));
+    }
+    renderer.drawCenteredText(SMALL_FONT_ID, 27 + renderer.getLineHeight(SMALL_FONT_ID) * 5, status);
+  }
+  const char* hint = windowBenchmark.currentPhase() == rsvp::WindowBenchmarkPhase::Idle ? tr(STR_RSVP_WINDOW_START_HINT)
+                     : windowReportFailed                                               ? tr(STR_RSVP_WINDOW_CSV_ERROR)
+                     : windowReportSaved ? tr(STR_RSVP_WINDOW_CSV_SAVED)
+                                         : tr(STR_RSVP_WINDOW_ABORT_HINT);
+  renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight() - renderer.getLineHeight(SMALL_FONT_ID) - 12,
+                            hint);
+#else
+#ifdef CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS
+  char status[128];
+#else
   char status[48];
+#endif
   const char* stateText = currentDecision.state == rsvp::State::Playing ? tr(STR_RSVP_PLAYING) : tr(STR_RSVP_PAUSED);
+#ifdef CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS
+  snprintf(status, sizeof(status), tr(STR_RSVP_SPEED_MODE), stateText, static_cast<unsigned>(currentDecision.paceWpm));
+#else
   snprintf(status, sizeof(status), "%s  %u", stateText, static_cast<unsigned>(currentDecision.paceWpm));
+#endif
   renderer.drawCenteredText(SMALL_FONT_ID, 12, status);
+#ifdef CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS
+  snprintf(status, sizeof(status), tr(STR_RSVP_SPEED_METRICS),
+           static_cast<unsigned>(speedProbe.actualFramesPerMinute()),
+           static_cast<unsigned long>(speedProbe.averageFastMs()));
+  renderer.drawCenteredText(SMALL_FONT_ID, 15 + renderer.getLineHeight(SMALL_FONT_ID), status);
+#endif
   const char* hint = isSkippableNonTextPause(currentDecision.pauseReason) ? tr(STR_RSVP_HINT_BOUNDARY_SKIP)
                                                                           : tr(STR_RSVP_HINT_MODE_SWITCH);
   renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight() - renderer.getLineHeight(SMALL_FONT_ID) - 12,
                             hint);
+#endif
 }
 
 void RsvpReaderActivity::renderBook() {
   if (!currentDecision.render && pauseMessage() == nullptr) return;
+#if defined(CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS) || \
+    (defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC)
+  const uint32_t frameStartedAt = millis();
+#endif
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  drawnRegionValid = false;
+  if (checkedDisplayFailure.load(std::memory_order_acquire) && !renderer.checkedDisplayReady()) return;
+#endif
 
   renderer.clearScreen();
   const char* message = pauseMessage();
@@ -727,11 +1242,66 @@ void RsvpReaderActivity::renderBook() {
   currentDecision.cleanupRefresh = false;
   const auto kind = cleanup ? rsvp::RefreshKind::Cleanup : rsvp::RefreshKind::Fast;
   const auto mode = cleanup ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH;
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  HalDisplay::DisplayUpdateResult updateResult;
+  const bool useWindow = windowDiagnosticStarted && windowBenchmark.windowCandidateEnabled() && !cleanup &&
+                         message == nullptr && currentDecision.state == rsvp::State::Playing && drawnRegionValid &&
+                         presentedRegionValid &&
+                         renderer.windowBaselineState() == HalDisplay::WindowBaselineState::Valid;
+  if (useWindow) {
+    updateResult = renderer.displayWindowChecked(unionRegions(presentedRegion, drawnRegion));
+  } else {
+    updateResult = renderer.displayBufferChecked(mode);
+  }
+#else
   const uint32_t startedAt = millis();
   renderer.displayBuffer(mode);
-  const uint32_t duration = millis() - startedAt;
+#endif
+  const uint32_t presentedAt = millis();
+  const uint32_t duration =
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+      updateResult.durationMs;
+#else
+      presentedAt - startedAt;
+#endif
   refreshStats.record(kind, duration);
 
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  const bool updateSucceeded = updateResult.succeeded();
+  if (!updateSucceeded) {
+    windowBenchmark.record(presentedAt, presentedAt - frameStartedAt, duration, actualRefresh(updateResult.actualKind),
+                           windowFallback(updateResult), false, observedCpuMhz());
+    renderer.invalidateWindowBaseline();
+    presentedRegionValid = false;
+    checkedDisplayFailure.store(true, std::memory_order_release);
+    windowDiagnosticRunActive.store(false, std::memory_order_release);
+    windowBenchmark.fail(presentedAt);
+    windowReportPending = true;
+    if (message == nullptr && session) {
+      currentDecision = session->step({.nowMs = presentedAt,
+                                       .action = rsvp::Action::FramePresentationFailed,
+                                       .presentedFrameId = currentDecision.frame.id,
+                                       .refreshDurationMs = duration});
+    }
+    return;
+  }
+  if (checkedDisplayFailure.load(std::memory_order_acquire) &&
+      (updateResult.actualKind == HalDisplay::DisplayUpdateKind::Full ||
+       updateResult.actualKind == HalDisplay::DisplayUpdateKind::Cleanup)) {
+    // Keep navigation, modal UI, and auto-sleep blocked until the checked
+    // recovery presentation itself succeeds, not merely until BUSY reads ready.
+    checkedDisplayFailure.store(false, std::memory_order_release);
+  }
+  if (message == nullptr && drawnRegionValid) {
+    presentedRegion = drawnRegion;
+    presentedRegionValid = true;
+  } else {
+    presentedRegionValid = false;
+  }
+#endif
+
+#if !defined(CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS) && \
+    (!defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) || !CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC)
   const auto& distribution = refreshStats.distribution(kind);
   LOG_INF("RSVP", "refresh=%s duration=%lums n=%lu min=%lu avg=%lu max=%lu buckets=%lu,%lu,%lu,%lu,%lu,%lu heap=%u",
           cleanup ? "cleanup" : "fast", static_cast<unsigned long>(duration),
@@ -741,6 +1311,7 @@ void RsvpReaderActivity::renderBook() {
           static_cast<unsigned long>(distribution.buckets[2]), static_cast<unsigned long>(distribution.buckets[3]),
           static_cast<unsigned long>(distribution.buckets[4]), static_cast<unsigned long>(distribution.buckets[5]),
           ESP.getFreeHeap());
+#endif
 
   if (message == nullptr && !wordDoesNotFitPending.load()) {
 #ifdef SIMULATOR
@@ -751,7 +1322,12 @@ void RsvpReaderActivity::renderBook() {
               group->count > 2 ? group->tokens[2].text : "");
     }
 #endif
-    const auto acknowledgement = session->step({.nowMs = millis(),
+    const auto acknowledgement = session->step({.nowMs =
+#ifdef CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS
+                                                    presentedAt,
+#else
+                                                    millis(),
+#endif
                                                 .action = rsvp::Action::FramePresented,
                                                 .presentedFrameId = currentDecision.frame.id,
                                                 .refreshDurationMs = duration});
@@ -759,7 +1335,39 @@ void RsvpReaderActivity::renderBook() {
       LOG_ERR("RSVP", "Ignored presentation acknowledgement for frame %lu",
               static_cast<unsigned long>(currentDecision.frame.id));
     }
+#ifdef CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS
+    if (acknowledgement.presentationAccepted && currentDecision.state == rsvp::State::Playing &&
+        speedProbe.record(currentDecision.frame.id, currentDecision.paceWpm, presentedAt, duration, cleanup)) {
+      const auto* displayedGroup = currentDecision.frame.presentationGroup;
+      LOG_INF("RSVP-SPEED",
+              "sample run=%lu frame=%lu pace=%u kind=%s refresh_ms=%lu frame_ms=%lu interval_ms=%lu words=%u heap=%u",
+              static_cast<unsigned long>(speedProbe.run()), static_cast<unsigned long>(currentDecision.frame.id),
+              currentDecision.paceWpm, cleanup ? "cleanup" : "fast", static_cast<unsigned long>(duration),
+              static_cast<unsigned long>(presentedAt - frameStartedAt),
+              static_cast<unsigned long>(speedProbe.intervalMs()), displayedGroup ? displayedGroup->count : 1u,
+              ESP.getFreeHeap());
+    }
+#endif
+#if !defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) || !CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
     if (acknowledgement.checkpointRequested) checkpointRequestedFromRender.store(true);
+#endif
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+    if (acknowledgement.presentationAccepted) {
+      windowBenchmark.record(presentedAt, presentedAt - frameStartedAt, duration,
+                             actualRefresh(updateResult.actualKind), windowFallback(updateResult), true,
+                             observedCpuMhz(), currentDecision.frame.id);
+    }
+    if (acknowledgement.presentationAccepted && windowAutoPlayPending) {
+      const auto playing = session->step({.nowMs = presentedAt, .action = rsvp::Action::TogglePlayback});
+      currentDecision.state = playing.state;
+      currentDecision.error = playing.error;
+      currentDecision.pauseReason = playing.pauseReason;
+      currentDecision.nextDeadlineMs = playing.nextDeadlineMs;
+      currentDecision.paceWpm = playing.paceWpm;
+      currentDecision.render = false;
+      windowAutoPlayPending = false;
+    }
+#endif
   }
   if (fatalFallbackPending.load(std::memory_order_acquire)) fatalFallbackReady.store(true);
 }

@@ -54,6 +54,7 @@ enum class Action : uint8_t {
   ModeSwitch,
   Exit,
   FramePresented,
+  FramePresentationFailed,
   WordDoesNotFit,
 };
 

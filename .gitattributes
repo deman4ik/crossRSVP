@@ -1,0 +1,2 @@
+# SDK delivery patches contain literal diff payload; check source whitespace after applying them.
+scripts/freeink_patches/*.patch -whitespace

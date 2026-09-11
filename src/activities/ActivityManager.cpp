@@ -93,6 +93,17 @@ void ActivityManager::loop() {
     return;
   }
 
+  if (currentActivity && currentActivity->displayRecoveryPending()) {
+    // Let the owning activity observe controller readiness and schedule its
+    // checked full recovery, but do not route global gestures or consume a
+    // pending activity transition until that recovery succeeds.
+    currentActivity->loop();
+    if (requestedUpdate.exchange(false) && renderTaskHandle) {
+      xTaskNotify(renderTaskHandle, 1, eIncrement);
+    }
+    return;
+  }
+
   if (currentActivity) {
     if (!currentActivity->isHomeActivity() && mappedInput.wasHomeGesture()) {
       if (currentActivity->handleHomeGesture()) {
@@ -341,6 +352,10 @@ void ActivityManager::popActivity() {
 }
 
 bool ActivityManager::preventAutoSleep() const { return currentActivity && currentActivity->preventAutoSleep(); }
+
+bool ActivityManager::displayRecoveryPending() const {
+  return currentActivity && currentActivity->displayRecoveryPending();
+}
 
 bool ActivityManager::requiresExclusiveStorageLoop() const {
   return currentActivity && currentActivity->requiresExclusiveStorageLoop();

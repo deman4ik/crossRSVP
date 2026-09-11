@@ -33,6 +33,8 @@ add_executable(RsvpTest
   RsvpPresentationGroupTest.cpp
   RsvpGroupingSettingsTest.cpp
   RsvpPendingActionsTest.cpp
+  RsvpSpeedProbeTest.cpp
+  RsvpWindowBenchmarkTest.cpp
   BookGroupingLanguagePreferenceTest.cpp
   EpubCacheUtilsTest.cpp
   ${REPO_ROOT}/lib/Rsvp/EpubVisibleTextSource.cpp
