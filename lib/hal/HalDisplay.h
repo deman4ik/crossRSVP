@@ -42,6 +42,7 @@ class HalDisplay {
     }
   };
   using WindowBaselineState = freeink::WindowBaselineState;
+  using DisplayUpdateTrace = freeink::DisplayUpdateTrace;
 
   using GrayscaleMode = freeink::GrayscaleMode;
   using GrayscaleCapabilities = freeink::GrayscaleCapabilities;
@@ -90,12 +91,14 @@ class HalDisplay {
   DisplayUpdateResult displayBufferChecked(RefreshMode mode = RefreshMode::FAST_REFRESH, bool turnOffScreen = false);
   DisplayUpdateResult displayWindowChecked(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
                                            bool turnOffScreen = false);
-  // The experimental gate can only open in the dedicated diagnostic build on
-  // an X3 whose active driver is UC8253 and whose probe was not inconclusive.
+  // Open the checked-window gate only when the runtime-selected driver
+  // advertises the complete capability. Unsupported drivers keep the normal
+  // full-frame path through FreeInkDisplay's safe fallback.
   void setExperimentalWindowUpdates(bool enabled);
   bool supportsExperimentalWindowUpdates() const;
   void invalidateWindowBaseline();
   WindowBaselineState windowBaselineState() const;
+  DisplayUpdateTrace lastDisplayUpdateTrace() const;
   bool checkedDisplayReady() const;
   // Non-blocking refresh (shadow-free): starts the panel waveform and returns
   // while the panel refreshes on its own. The framebuffer must stay untouched

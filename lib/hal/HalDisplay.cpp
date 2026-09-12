@@ -162,12 +162,25 @@ void HalDisplay::setExperimentalWindowUpdates(bool enabled) {
     windowGateFallback = DisplayUpdateFallback::UnsupportedController;
   } else if (enabled && detection.confidence == ControllerConfidence::Inconclusive) {
     windowGateFallback = DisplayUpdateFallback::InconclusiveController;
+  } else if (enabled && !einkDisplay.supportsExperimentalWindowUpdates()) {
+    windowGateFallback = DisplayUpdateFallback::UnsupportedDriver;
   } else if (enabled) {
     eligible = true;
     windowGateFallback = DisplayUpdateFallback::None;
   }
 #else
-  (void)enabled;
+  const ControllerDetection detection = controllerDetection();
+  if (enabled && detection.isX3 && detection.confidence == ControllerConfidence::Inconclusive) {
+    // X3 controller auto-detection is the safety boundary for the C3 panel;
+    // X4/X4 Pro do not expose that probe and are gated by their selected
+    // driver's capability instead.
+    windowGateFallback = DisplayUpdateFallback::InconclusiveController;
+  } else if (enabled && !einkDisplay.supportsExperimentalWindowUpdates()) {
+    windowGateFallback = DisplayUpdateFallback::UnsupportedDriver;
+  } else if (enabled) {
+    eligible = true;
+    windowGateFallback = DisplayUpdateFallback::None;
+  }
 #endif
   einkDisplay.setExperimentalWindowUpdates(eligible);
 }
@@ -179,6 +192,10 @@ bool HalDisplay::supportsExperimentalWindowUpdates() const {
 void HalDisplay::invalidateWindowBaseline() { einkDisplay.invalidateWindowBaseline(); }
 
 HalDisplay::WindowBaselineState HalDisplay::windowBaselineState() const { return einkDisplay.windowBaselineState(); }
+
+HalDisplay::DisplayUpdateTrace HalDisplay::lastDisplayUpdateTrace() const {
+  return einkDisplay.lastDisplayUpdateTrace();
+}
 
 bool HalDisplay::checkedDisplayReady() const { return einkDisplay.checkedDisplayReady(); }
 

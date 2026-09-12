@@ -1760,6 +1760,25 @@ GfxRenderer::PhysicalRegion GfxRenderer::physicalDisplayRegion(const LogicalRegi
   return display_region::toPhysical(logicalRegion, regionOrientation, panelWidth, panelHeight);
 }
 
+GfxRenderer::LogicalRegion GfxRenderer::inkBounds(const LogicalRegion safeLogical) const {
+  display_region::Orientation regionOrientation = display_region::Orientation::Portrait;
+  switch (orientation) {
+    case Portrait:
+      break;
+    case LandscapeClockwise:
+      regionOrientation = display_region::Orientation::LandscapeClockwise;
+      break;
+    case PortraitInverted:
+      regionOrientation = display_region::Orientation::PortraitInverted;
+      break;
+    case LandscapeCounterClockwise:
+      regionOrientation = display_region::Orientation::LandscapeCounterClockwise;
+      break;
+  }
+  return display_region::inkBounds(frameBuffer, panelWidth, panelHeight, panelWidthBytes, safeLogical,
+                                   regionOrientation);
+}
+
 GfxRenderer::DisplayUpdateResult GfxRenderer::displayBufferChecked(HalDisplay::RefreshMode refreshMode) const {
   if (promotedRefreshPending_) refreshMode = promotedRefresh_;
   DisplayUpdateResult result = display.displayBufferChecked(refreshMode, fadingFix);
@@ -1796,6 +1815,8 @@ bool GfxRenderer::supportsExperimentalWindowUpdates() const { return display.sup
 void GfxRenderer::invalidateWindowBaseline() const { display.invalidateWindowBaseline(); }
 
 GfxRenderer::WindowBaselineState GfxRenderer::windowBaselineState() const { return display.windowBaselineState(); }
+
+GfxRenderer::DisplayUpdateTrace GfxRenderer::lastDisplayUpdateTrace() const { return display.lastDisplayUpdateTrace(); }
 
 bool GfxRenderer::checkedDisplayReady() const { return display.checkedDisplayReady(); }
 

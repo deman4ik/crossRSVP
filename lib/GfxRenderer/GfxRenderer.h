@@ -205,14 +205,17 @@ class GfxRenderer {
   using PhysicalRegion = display_region::PhysicalRegion;
   using DisplayUpdateResult = HalDisplay::DisplayUpdateResult;
   using WindowBaselineState = HalDisplay::WindowBaselineState;
+  using DisplayUpdateTrace = HalDisplay::DisplayUpdateTrace;
   using ControllerDetection = HalDisplay::ControllerDetection;
   PhysicalRegion physicalDisplayRegion(LogicalRegion logicalRegion) const;
+  LogicalRegion inkBounds(LogicalRegion safeLogical) const;
   DisplayUpdateResult displayBufferChecked(HalDisplay::RefreshMode refreshMode = HalDisplay::FAST_REFRESH) const;
   DisplayUpdateResult displayWindowChecked(LogicalRegion logicalRegion) const;
   void setExperimentalWindowUpdates(bool enabled) const;
   bool supportsExperimentalWindowUpdates() const;
   void invalidateWindowBaseline() const;
   WindowBaselineState windowBaselineState() const;
+  DisplayUpdateTrace lastDisplayUpdateTrace() const;
   bool checkedDisplayReady() const;
   ControllerDetection controllerDetection() const;
   // One-shot: the next displayBuffer()/displayBufferAsync() call uses `mode`

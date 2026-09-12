@@ -60,6 +60,10 @@ class Scenario:
     menu_language: str = "RU"
     expected_groups: tuple[str, ...] = ()
     expected_book_language: int | None = None
+    screen_inverted: bool = True
+    display_controller: str = ""
+    window_failure: str = ""
+    window_recover: bool = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -102,6 +106,7 @@ def write_simulator_state(
     short_word_grouping: bool,
     start_home: bool,
     menu_language: str = "RU",
+    screen_inverted: bool = True,
 ) -> None:
     fs_root = run_root / "fs_"
     books = fs_root / "books"
@@ -119,7 +124,7 @@ def write_simulator_state(
         "rsvpGuideStyle": 1,
         "rsvpPaceWpm": pace_wpm,
         "rsvpShortWordGrouping": int(short_word_grouping),
-        "screenInverted": 1,
+        "screenInverted": int(screen_inverted),
         "uiTheme": 1,
         "readerMenuStyle": reader_menu_style,
         "showReaderMenu": 1,
@@ -174,6 +179,85 @@ def activity_entry_count(output: str, activity: str) -> int:
     return sum(line.endswith(marker) for line in output.splitlines())
 
 
+PRODUCTION_WINDOW_TRACE_RE = re.compile(
+    r"production_roi stage=normal_window frame=(?P<frame>\d+) "
+    r"logical_x=(?P<logical_x>-?\d+) logical_y=(?P<logical_y>-?\d+) "
+    r"logical_w=(?P<logical_w>-?\d+) logical_h=(?P<logical_h>-?\d+) "
+    r"physical_x=(?P<x>\d+) physical_y=(?P<y>\d+) "
+    r"physical_w=(?P<w>\d+) physical_h=(?P<h>\d+) "
+    r"baseline_before=(?P<before>\d+) baseline_after=(?P<after>\d+)"
+)
+PRODUCTION_FULL_TRACE_RE = re.compile(r"production_display stage=normal_full frame=(?P<frame>\d+)")
+
+
+def validate_production_window_trace(output: Path, device: str, orientation: int) -> None:
+    """Require a real checked line update after a checked full baseline."""
+    log_path = output / f"production-window-{orientation}.log"
+    log = log_path.read_text(encoding="utf-8")
+    windows = list(PRODUCTION_WINDOW_TRACE_RE.finditer(log))
+    fulls = list(PRODUCTION_FULL_TRACE_RE.finditer(log))
+    if len(windows) < 2:
+        raise RuntimeError(f"{log_path.name}: expected at least two production window updates")
+    if not fulls or fulls[0].start() > windows[0].start():
+        raise RuntimeError(f"{log_path.name}: no checked full baseline preceded the first window update")
+    panel_width, panel_height = (792, 528) if device == "x3" else (800, 480)
+    portrait_width, portrait_height = DEVICE_PROFILES[device][1]
+    logical_width, logical_height = ((portrait_height, portrait_width) if orientation % 2 else
+                                     (portrait_width, portrait_height))
+    frames = []
+    for match in windows:
+        values = {key: int(value) for key, value in match.groupdict().items()}
+        frames.append(values["frame"])
+        if values["logical_w"] <= 0 or values["logical_h"] <= 0:
+            raise RuntimeError(f"{log_path.name}: invalid logical production ROI {values}")
+        if (values["logical_x"] < 0 or values["logical_y"] < 0 or
+                values["logical_x"] + values["logical_w"] > logical_width or
+                values["logical_y"] + values["logical_h"] > logical_height):
+            raise RuntimeError(f"{log_path.name}: logical production ROI out of bounds {values}")
+        if (values["w"] <= 0 or values["h"] <= 0 or values["x"] + values["w"] > panel_width or
+                values["y"] + values["h"] > panel_height):
+            raise RuntimeError(f"{log_path.name}: physical production ROI out of bounds {values}")
+        if values["before"] != 2 or values["after"] != 2:
+            raise RuntimeError(f"{log_path.name}: production window did not preserve a valid baseline {values}")
+        if values["w"] * values["h"] >= panel_width * panel_height:
+            raise RuntimeError(f"{log_path.name}: production window covers the full panel {values}")
+    if frames != sorted(frames) or len(set(frames)) != len(frames):
+        raise RuntimeError(f"{log_path.name}: production window frame ids are not increasing: {frames}")
+
+
+def validate_inverted_production_fallback(output: Path) -> None:
+    log_path = output / "flow-portrait.log"
+    log = log_path.read_text(encoding="utf-8")
+    if "production_display stage=normal_full" not in log:
+        raise RuntimeError("flow-portrait: inverted mode did not use the checked full path")
+    if "production_roi stage=normal_window" in log:
+        raise RuntimeError("flow-portrait: inverted mode unexpectedly used a differential window")
+
+
+def validate_unsupported_production_fallback(output: Path) -> None:
+    log_path = output / "production-window-unsupported.log"
+    log = log_path.read_text(encoding="utf-8")
+    if "production_roi stage=normal_window" in log:
+        raise RuntimeError("production-window-unsupported: unsupported controller used a differential window")
+    if log.count("[RSVP] refresh=fast") < 2:
+        raise RuntimeError("production-window-unsupported: unsupported controller did not keep presenting frames")
+
+
+def validate_production_window_recovery(output: Path) -> None:
+    log_path = output / "production-window-recovery.log"
+    log = log_path.read_text(encoding="utf-8")
+    failure = "[ERR] [RSVP] Checked display failed"
+    if failure not in log:
+        raise RuntimeError("production-window-recovery: injected checked failure was not observed")
+    failure_index = log.index(failure)
+    if "production_display stage=normal_full" not in log[failure_index:]:
+        raise RuntimeError("production-window-recovery: checked full recovery was not observed")
+    if "control action=6 state=6" not in log:
+        raise RuntimeError("production-window-recovery: queued Back action was lost after recovery")
+    if activity_entry_count(log, "EpubReader") < 2:
+        raise RuntimeError("production-window-recovery: recovery did not return to Paged Mode")
+
+
 def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenario: Scenario, device: str) -> None:
     log_path = output / f"{scenario.name}.log"
     log_path.unlink(missing_ok=True)
@@ -195,12 +279,19 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
             scenario.short_word_grouping,
             scenario.start_home,
             scenario.menu_language,
+            scenario.screen_inverted,
         )
         env = os.environ.copy()
         env["CROSSPOINT_SIM_INPUT_SCRIPT"] = delayed_inputs(scenario.input_script)
         env["CROSSPOINT_SIM_SCREENSHOTS"] = screenshot_schedule(output, scenario.screenshots)
         env["CROSSPOINT_SIM_FREE_HEAP"] = "65536"
         env["CROSSPOINT_SIM_MAX_ALLOC_HEAP"] = "32768"
+        if scenario.display_controller:
+            env["CROSSPOINT_SIM_DISPLAY_CONTROLLER"] = scenario.display_controller
+        if scenario.window_failure:
+            env["CROSSPOINT_SIM_WINDOW_FAILURE"] = scenario.window_failure
+        if scenario.window_recover:
+            env["CROSSPOINT_SIM_WINDOW_RECOVER"] = "1"
         if scenario.refresh_latency_ms:
             env["CROSSPOINT_SIM_DISPLAY_REFRESH_MS"] = str(scenario.refresh_latency_ms)
         if scenario.fatal_load:
@@ -270,6 +361,8 @@ def run_scenario(program: Path, fixtures: dict[str, Path], output: Path, scenari
         allowed_errors = {"[ERR] [EBP] Warning: Could not parse any TOC format"}
         if scenario.fatal_load:
             allowed_errors.add("[ERR] [RSVP] Injected simulator RSVP source-open failure")
+        if scenario.window_failure:
+            allowed_errors.add("[ERR] [RSVP] Checked display failed")
         if scenario.name.startswith("touch-long-word-"):
             allowed_errors.add("[ERR] [RSVP] Failed to save RSVP checkpoint")
         unexpected_errors = [
@@ -530,6 +623,14 @@ def validate_short_word_grouping_screenshots(output: Path) -> None:
 
 def scenarios(device: str) -> list[Scenario]:
     enter_rsvp = "1200:ENTER;2200:DOWN;2600:DOWN;3000:DOWN;3400:ENTER"
+
+    def enter_rsvp_for_orientation(orientation: int) -> str:
+        # Touch-board front controls follow the rendered orientation.  In the
+        # inverted pair the raw Down key is the logical previous-item action,
+        # so use Up to reach the RSVP row in the reader menu.
+        navigation = "UP" if orientation in (2, 3) else "DOWN"
+        return f"1200:ENTER;2200:{navigation};2600:{navigation};3000:{navigation};3400:ENTER"
+
     expected_max = RSVP_EXPECTED_MAX_WPM[device]
     pace_steps = (expected_max - RSVP_PACE_MIN_WPM) // RSVP_PACE_STEP_WPM
     return [
@@ -548,6 +649,35 @@ def scenarios(device: str) -> list[Scenario]:
                 8400: "flow-portrait-paged-highlight.bmp",
                 12100: "flow-portrait-rsvp-again.bmp",
             },
+        ),
+        *[
+            Scenario(
+                name=f"production-window-{orientation}",
+                orientation=orientation,
+                input_script=f"{enter_rsvp_for_orientation(orientation)};5000:ENTER;9000:QUIT",
+                screenshots={7000: f"production-window-{orientation}-playing.bmp"},
+                # Night mode intentionally forces a full checked repaint because
+                # the differential baseline has the opposite output polarity.
+                screen_inverted=False,
+            )
+            for orientation in range(4)
+        ],
+        Scenario(
+            name="production-window-unsupported",
+            orientation=0,
+            input_script=f"{enter_rsvp};5000:ENTER;9000:QUIT",
+            screenshots={7000: "production-window-unsupported-playing.bmp"},
+            screen_inverted=False,
+            display_controller="uc8179",
+        ),
+        Scenario(
+            name="production-window-recovery",
+            orientation=0,
+            input_script=f"{enter_rsvp};5000:ENTER;6200:BACK;9000:QUIT",
+            screenshots={},
+            screen_inverted=False,
+            window_failure="busy_timeout_once",
+            window_recover=True,
         ),
         Scenario(
             name="boundary-image",
@@ -964,7 +1094,16 @@ def main() -> int:
             "long-word": long_word_fixture,
         }
         fixtures.update(build_language_fixtures(fixture_root))
-        available = touch_scenarios() if args.device == "x4pro" else scenarios(args.device)
+        if args.device == "x4pro":
+            available = touch_scenarios()
+            available.extend(
+                scenario
+                for scenario in scenarios(args.device)
+                if scenario.name == "flow-portrait"
+                or scenario.name.startswith("production-window-")
+            )
+        else:
+            available = scenarios(args.device)
         available.extend(language_scenarios(args.device))
         selected = [scenario for scenario in available if not args.scenario or scenario.name in args.scenario]
         unknown = set(args.scenario or ()) - {scenario.name for scenario in available}
@@ -975,6 +1114,14 @@ def main() -> int:
             run_scenario(program, fixtures, output, scenario, args.device)
         if any(scenario.name == "flow-portrait" for scenario in selected):
             validate_flow_screenshots(output)
+            validate_inverted_production_fallback(output)
+        for orientation in range(4):
+            if any(scenario.name == f"production-window-{orientation}" for scenario in selected):
+                validate_production_window_trace(output, args.device, orientation)
+        if any(scenario.name == "production-window-unsupported" for scenario in selected):
+            validate_unsupported_production_fallback(output)
+        if any(scenario.name == "production-window-recovery" for scenario in selected):
+            validate_production_window_recovery(output)
         if any(scenario.name == "boundary-image" for scenario in selected):
             validate_boundary_skip_screenshots(output)
         if any(scenario.name == "highlight-reopen" for scenario in selected):

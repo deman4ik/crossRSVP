@@ -93,6 +93,16 @@ if "enum class ControllerConfidence" not in header_text:
     )
     header_text = header_text.replace(controller_anchor, controller_contract, 1)
 
+if "using DisplayUpdateTrace = freeink::DisplayUpdateTrace;" not in header_text:
+    trace_anchor = "  using WindowBaselineState = freeink::WindowBaselineState;\n"
+    if trace_anchor not in header_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing trace alias anchor: {header}")
+    header_text = header_text.replace(
+        trace_anchor,
+        trace_anchor + "  using DisplayUpdateTrace = freeink::DisplayUpdateTrace;\n",
+        1,
+    )
+
 if "DisplayUpdateResult displayBufferChecked" not in header_text:
     checked_anchor = "  void displayBufferAsync(RefreshMode mode = RefreshMode::FAST_REFRESH);\n"
     if checked_anchor not in header_text:
@@ -111,6 +121,16 @@ if "DisplayUpdateResult displayBufferChecked" not in header_text:
     )
     header_text = header_text.replace(checked_anchor, checked_contract, 1)
 
+if "DisplayUpdateTrace lastDisplayUpdateTrace() const;" not in header_text:
+    trace_method_anchor = "  WindowBaselineState windowBaselineState() const;\n"
+    if trace_method_anchor not in header_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing trace method anchor: {header}")
+    header_text = header_text.replace(
+        trace_method_anchor,
+        trace_method_anchor + "  DisplayUpdateTrace lastDisplayUpdateTrace() const;\n",
+        1,
+    )
+
 if "DisplayUpdateFallback windowGateFallback" not in header_text:
     private_anchor = "  bool inverted = false;\n"
     if private_anchor not in header_text:
@@ -121,6 +141,16 @@ if "DisplayUpdateFallback windowGateFallback" not in header_text:
         + "  DisplayUpdateFallback windowGateFallback = DisplayUpdateFallback::ExperimentalDisabled;\n"
         + "  WindowBaselineState baselineState = WindowBaselineState::Invalid;\n"
         + "  bool displayReady = true;\n",
+        1,
+    )
+
+if "  DisplayUpdateTrace lastTrace;" not in header_text:
+    trace_member_anchor = "  bool displayReady = true;\n"
+    if trace_member_anchor not in header_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing trace member anchor: {header}")
+    header_text = header_text.replace(
+        trace_member_anchor,
+        trace_member_anchor + "  DisplayUpdateTrace lastTrace;\n",
         1,
     )
 
@@ -179,9 +209,15 @@ if "void renderBwRegion(const uint8_t *fb" not in source_text:
         "}\n\n"
         "bool consumeWindowFailure(const char *expected) {\n"
         "  static bool consumed = false;\n"
+        "  static unsigned long matchingCalls = 0;\n"
         "  if (consumed) return false;\n"
         "  const char *configured = std::getenv(\"CROSSPOINT_SIM_WINDOW_FAILURE\");\n"
         "  if (!configured || std::strcmp(configured, expected) != 0) return false;\n"
+        "  ++matchingCalls;\n"
+        "  const char *skipValue = std::getenv(\"CROSSPOINT_SIM_WINDOW_FAILURE_AFTER\");\n"
+        "  const unsigned long skipCalls =\n"
+        "      skipValue ? std::strtoul(skipValue, nullptr, 10) : 0;\n"
+        "  if (matchingCalls <= skipCalls) return false;\n"
         "  consumed = true;\n"
         "  return true;\n"
         "}\n\n"
@@ -192,6 +228,44 @@ if "void renderBwRegion(const uint8_t *fb" not in source_text:
         + region_anchor,
         1,
     )
+
+if "void beginSimulatorDisplayTrace(" not in source_text:
+    trace_source_anchor = "namespace {\n\n"
+    if trace_source_anchor not in source_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing trace source anchor: {source}")
+    trace_helpers = (
+        "namespace {\n\n"
+        "void beginSimulatorDisplayTrace(HalDisplay::DisplayUpdateTrace& trace,\n"
+        "                                freeink::DisplayTracePhase phase, uint16_t x, uint16_t y,\n"
+        "                                uint16_t width, uint16_t height,\n"
+        "                                freeink::WindowBaselineState baseline) {\n"
+        "  trace = {};\n"
+        "  trace.valid = true;\n"
+        "  trace.phase = phase;\n"
+        "  trace.stage = freeink::DisplayTraceStage::Validate;\n"
+        "  trace.wait = freeink::DisplayTraceWait::None;\n"
+        "  trace.baselineBefore = baseline;\n"
+        "  trace.baselineAfter = baseline;\n"
+        "  trace.x = x;\n"
+        "  trace.y = y;\n"
+        "  trace.width = width;\n"
+        "  trace.height = height;\n"
+        "  // The SDL shim has no panel BUSY signal. Keep both flags false even\n"
+        "  // when a test asks the shim to inject a checked failure.\n"
+        "  trace.busyBefore = false;\n"
+        "  trace.busyAfter = false;\n"
+        "}\n\n"
+        "void completeSimulatorDisplayTrace(HalDisplay::DisplayUpdateTrace& trace,\n"
+        "                                   freeink::WindowBaselineState baseline) {\n"
+        "  trace.stage = freeink::DisplayTraceStage::Complete;\n"
+        "  trace.wait = freeink::DisplayTraceWait::Ready;\n"
+        "  trace.baselineAfter = baseline;\n"
+        "  trace.busyAfter = false;\n"
+        "  // SDL presents pixels directly; it has no controller payload or refresh\n"
+        "  // command to measure. Keep those fields at their zero/false defaults.\n"
+        "}\n\n"
+    )
+    source_text = source_text.replace(trace_source_anchor, trace_helpers, 1)
 
 if "HalDisplay::ControllerDetection HalDisplay::controllerDetection() const" not in source_text:
     detection_anchor = "HalDisplay::Controller HalDisplay::getController() const { return BoardConfig::ACTIVE.displayController; }\n"
@@ -222,9 +296,15 @@ if "HalDisplay::DisplayUpdateResult HalDisplay::displayBufferChecked" not in sou
         checked_source_anchor,
         "HalDisplay::DisplayUpdateResult HalDisplay::displayBufferChecked(RefreshMode mode, bool turnOffScreen) {\n"
         "  DisplayUpdateResult result;\n"
+        "  const WindowBaselineState baselineBefore = baselineState;\n"
+        "  beginSimulatorDisplayTrace(lastTrace, freeink::DisplayTracePhase::Full, 0, 0, DISPLAY_WIDTH,\n"
+        "                             DISPLAY_HEIGHT, baselineBefore);\n"
         "  result.requestedKind = mode == FAST_REFRESH ? DisplayUpdateKind::Full : DisplayUpdateKind::Cleanup;\n"
         "  if (!checkedDisplayReady()) {\n"
         "    result.error = DisplayUpdateError::BusyNotReady;\n"
+        "    lastTrace.stage = freeink::DisplayTraceStage::Preflight;\n"
+        "    lastTrace.error = freeink::DisplayUpdateError::BusyNotReady;\n"
+        "    lastTrace.baselineAfter = baselineState;\n"
         "    return result;\n"
         "  }\n"
         "  const unsigned long started = millis();\n"
@@ -234,20 +314,30 @@ if "HalDisplay::DisplayUpdateResult HalDisplay::displayBufferChecked" not in sou
         "  baselineState = turnOffScreen ? WindowBaselineState::Invalid : WindowBaselineState::Valid;\n"
         "  result.actualKind = result.requestedKind;\n"
         "  result.durationMs = millis() - started;\n"
+        "  completeSimulatorDisplayTrace(lastTrace, baselineState);\n"
         "  return result;\n"
         "}\n\n"
         "HalDisplay::DisplayUpdateResult HalDisplay::displayWindowChecked(\n"
         "    uint16_t x, uint16_t y, uint16_t width, uint16_t height, bool turnOffScreen) {\n"
         "  DisplayUpdateResult result;\n"
+        "  const WindowBaselineState baselineBefore = baselineState;\n"
+        "  beginSimulatorDisplayTrace(lastTrace, freeink::DisplayTracePhase::Window, x, y, width, height,\n"
+        "                             baselineBefore);\n"
         "  result.requestedKind = DisplayUpdateKind::Window;\n"
         "  if (width == 0 || height == 0 || (x & 0x7u) != 0 || (width & 0x7u) != 0 ||\n"
         "      static_cast<uint32_t>(x) + width > DISPLAY_WIDTH ||\n"
         "      static_cast<uint32_t>(y) + height > DISPLAY_HEIGHT) {\n"
         "    result.error = DisplayUpdateError::InvalidRegion;\n"
+        "    lastTrace.stage = freeink::DisplayTraceStage::Validate;\n"
+        "    lastTrace.error = freeink::DisplayUpdateError::InvalidRegion;\n"
+        "    lastTrace.baselineAfter = baselineState;\n"
         "    return result;\n"
         "  }\n"
         "  if (!checkedDisplayReady() || consumeWindowFailure(\"busy_not_ready_once\")) {\n"
         "    result.error = DisplayUpdateError::BusyNotReady;\n"
+        "    lastTrace.stage = freeink::DisplayTraceStage::Preflight;\n"
+        "    lastTrace.error = freeink::DisplayUpdateError::BusyNotReady;\n"
+        "    lastTrace.baselineAfter = baselineState;\n"
         "    return result;\n"
         "  }\n"
         "  DisplayUpdateFallback fallback = windowGateFallback;\n"
@@ -264,6 +354,9 @@ if "HalDisplay::DisplayUpdateResult HalDisplay::displayBufferChecked" not in sou
         "    displayReady = false;\n"
         "    baselineState = WindowBaselineState::Invalid;\n"
         "    result.error = DisplayUpdateError::BusyTimeout;\n"
+        "    lastTrace.stage = freeink::DisplayTraceStage::Preflight;\n"
+        "    lastTrace.error = freeink::DisplayUpdateError::BusyTimeout;\n"
+        "    lastTrace.baselineAfter = baselineState;\n"
         "    return result;\n"
         "  }\n"
         "  const unsigned long started = millis();\n"
@@ -271,6 +364,7 @@ if "HalDisplay::DisplayUpdateResult HalDisplay::displayBufferChecked" not in sou
         "  baselineState = turnOffScreen ? WindowBaselineState::Invalid : WindowBaselineState::Valid;\n"
         "  result.actualKind = DisplayUpdateKind::Window;\n"
         "  result.durationMs = millis() - started;\n"
+        "  completeSimulatorDisplayTrace(lastTrace, baselineState);\n"
         "  return result;\n"
         "}\n\n"
         "void HalDisplay::setExperimentalWindowUpdates(bool enabled) {\n"
@@ -287,7 +381,12 @@ if "HalDisplay::DisplayUpdateResult HalDisplay::displayBufferChecked" not in sou
         "    windowGateFallback = DisplayUpdateFallback::None;\n"
         "  }\n"
         "#else\n"
-        "  (void)enabled;\n"
+        "  const char *controllerOverride = std::getenv(\"CROSSPOINT_SIM_DISPLAY_CONTROLLER\");\n"
+        "  if (enabled && controllerOverride && std::strcmp(controllerOverride, \"uc8179\") == 0) {\n"
+        "    windowGateFallback = DisplayUpdateFallback::UnsupportedDriver;\n"
+        "  } else if (enabled) {\n"
+        "    windowGateFallback = DisplayUpdateFallback::None;\n"
+        "  }\n"
         "#endif\n"
         "}\n\n"
         "bool HalDisplay::supportsExperimentalWindowUpdates() const {\n"
@@ -295,10 +394,172 @@ if "HalDisplay::DisplayUpdateResult HalDisplay::displayBufferChecked" not in sou
         "}\n\n"
         "void HalDisplay::invalidateWindowBaseline() { baselineState = WindowBaselineState::Invalid; }\n\n"
         "HalDisplay::WindowBaselineState HalDisplay::windowBaselineState() const { return baselineState; }\n\n"
+        "HalDisplay::DisplayUpdateTrace HalDisplay::lastDisplayUpdateTrace() const { return lastTrace; }\n\n"
         "bool HalDisplay::checkedDisplayReady() const {\n"
         "  return displayReady || simulatorWindowRecoveryEnabled();\n"
         "}\n\n"
         + checked_source_anchor,
+        1,
+    )
+
+# Migrate simulator dependency copies created before the display trace was
+# added. PlatformIO keeps libdeps between runs, so the insertion-only block
+# above is insufficient once the old checked methods already exist.
+if "beginSimulatorDisplayTrace(lastTrace" not in source_text:
+    full_prefix = (
+        "HalDisplay::DisplayUpdateResult HalDisplay::displayBufferChecked(RefreshMode mode, bool turnOffScreen) {\n"
+        "  DisplayUpdateResult result;\n"
+    )
+    if full_prefix not in source_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing checked full trace anchor: {source}")
+    source_text = source_text.replace(
+        full_prefix,
+        full_prefix
+        + "  const WindowBaselineState baselineBefore = baselineState;\n"
+        + "  beginSimulatorDisplayTrace(lastTrace, freeink::DisplayTracePhase::Full, 0, 0, DISPLAY_WIDTH,\n"
+        + "                             DISPLAY_HEIGHT, baselineBefore);\n",
+        1,
+    )
+    full_failure = (
+        "  if (!checkedDisplayReady()) {\n"
+        "    result.error = DisplayUpdateError::BusyNotReady;\n"
+        "    return result;\n"
+        "  }\n"
+    )
+    if full_failure not in source_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing checked full failure anchor: {source}")
+    source_text = source_text.replace(
+        full_failure,
+        "  if (!checkedDisplayReady()) {\n"
+        "    result.error = DisplayUpdateError::BusyNotReady;\n"
+        "    lastTrace.stage = freeink::DisplayTraceStage::Preflight;\n"
+        "    lastTrace.error = freeink::DisplayUpdateError::BusyNotReady;\n"
+        "    lastTrace.baselineAfter = baselineState;\n"
+        "    return result;\n"
+        "  }\n",
+        1,
+    )
+    full_success = (
+        "  result.durationMs = millis() - started;\n"
+        "  return result;\n"
+        "}\n\n"
+        "HalDisplay::DisplayUpdateResult HalDisplay::displayWindowChecked(\n"
+    )
+    if full_success not in source_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing checked full success anchor: {source}")
+    source_text = source_text.replace(
+        full_success,
+        "  result.durationMs = millis() - started;\n"
+        "  completeSimulatorDisplayTrace(lastTrace, baselineState);\n"
+        "  return result;\n"
+        "}\n\n"
+        "HalDisplay::DisplayUpdateResult HalDisplay::displayWindowChecked(\n",
+        1,
+    )
+
+    window_prefix = (
+        "HalDisplay::DisplayUpdateResult HalDisplay::displayWindowChecked(\n"
+        "    uint16_t x, uint16_t y, uint16_t width, uint16_t height, bool turnOffScreen) {\n"
+        "  DisplayUpdateResult result;\n"
+    )
+    if window_prefix not in source_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing checked window trace anchor: {source}")
+    source_text = source_text.replace(
+        window_prefix,
+        window_prefix
+        + "  const WindowBaselineState baselineBefore = baselineState;\n"
+        + "  beginSimulatorDisplayTrace(lastTrace, freeink::DisplayTracePhase::Window, x, y, width, height,\n"
+        + "                             baselineBefore);\n",
+        1,
+    )
+    window_invalid = (
+        "      static_cast<uint32_t>(y) + height > DISPLAY_HEIGHT) {\n"
+        "    result.error = DisplayUpdateError::InvalidRegion;\n"
+        "    return result;\n"
+        "  }\n"
+    )
+    if window_invalid not in source_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing checked invalid trace anchor: {source}")
+    source_text = source_text.replace(
+        window_invalid,
+        "      static_cast<uint32_t>(y) + height > DISPLAY_HEIGHT) {\n"
+        "    result.error = DisplayUpdateError::InvalidRegion;\n"
+        "    lastTrace.stage = freeink::DisplayTraceStage::Validate;\n"
+        "    lastTrace.error = freeink::DisplayUpdateError::InvalidRegion;\n"
+        "    lastTrace.baselineAfter = baselineState;\n"
+        "    return result;\n"
+        "  }\n",
+        1,
+    )
+    window_busy = (
+        "  if (!checkedDisplayReady() || consumeWindowFailure(\"busy_not_ready_once\")) {\n"
+        "    result.error = DisplayUpdateError::BusyNotReady;\n"
+        "    return result;\n"
+        "  }\n"
+    )
+    if window_busy not in source_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing checked window failure anchor: {source}")
+    source_text = source_text.replace(
+        window_busy,
+        "  if (!checkedDisplayReady() || consumeWindowFailure(\"busy_not_ready_once\")) {\n"
+        "    result.error = DisplayUpdateError::BusyNotReady;\n"
+        "    lastTrace.stage = freeink::DisplayTraceStage::Preflight;\n"
+        "    lastTrace.error = freeink::DisplayUpdateError::BusyNotReady;\n"
+        "    lastTrace.baselineAfter = baselineState;\n"
+        "    return result;\n"
+        "  }\n",
+        1,
+    )
+    window_timeout = (
+        "  if (consumeWindowFailure(\"busy_timeout_once\")) {\n"
+        "    displayReady = false;\n"
+        "    baselineState = WindowBaselineState::Invalid;\n"
+        "    result.error = DisplayUpdateError::BusyTimeout;\n"
+        "    return result;\n"
+        "  }\n"
+    )
+    if window_timeout not in source_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing checked timeout trace anchor: {source}")
+    source_text = source_text.replace(
+        window_timeout,
+        "  if (consumeWindowFailure(\"busy_timeout_once\")) {\n"
+        "    displayReady = false;\n"
+        "    baselineState = WindowBaselineState::Invalid;\n"
+        "    result.error = DisplayUpdateError::BusyTimeout;\n"
+        "    lastTrace.stage = freeink::DisplayTraceStage::Preflight;\n"
+        "    lastTrace.error = freeink::DisplayUpdateError::BusyTimeout;\n"
+        "    lastTrace.baselineAfter = baselineState;\n"
+        "    return result;\n"
+        "  }\n",
+        1,
+    )
+    window_success = (
+        "  result.actualKind = DisplayUpdateKind::Window;\n"
+        "  result.durationMs = millis() - started;\n"
+        "  return result;\n"
+        "}\n\n"
+        "void HalDisplay::setExperimentalWindowUpdates(bool enabled) {\n"
+    )
+    if window_success not in source_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing checked window success anchor: {source}")
+    source_text = source_text.replace(
+        window_success,
+        "  result.actualKind = DisplayUpdateKind::Window;\n"
+        "  result.durationMs = millis() - started;\n"
+        "  completeSimulatorDisplayTrace(lastTrace, baselineState);\n"
+        "  return result;\n"
+        "}\n\n"
+        "void HalDisplay::setExperimentalWindowUpdates(bool enabled) {\n",
+        1,
+    )
+
+    window_baseline_method = "HalDisplay::WindowBaselineState HalDisplay::windowBaselineState() const { return baselineState; }\n\n"
+    if window_baseline_method not in source_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing trace accessor anchor: {source}")
+    source_text = source_text.replace(
+        window_baseline_method,
+        window_baseline_method
+        + "HalDisplay::DisplayUpdateTrace HalDisplay::lastDisplayUpdateTrace() const { return lastTrace; }\n\n",
         1,
     )
 
@@ -340,6 +601,67 @@ if "// Checked-window baseline is invalid after any legacy presentation." not in
         "  baselineState = WindowBaselineState::Invalid;\n",
         1,
     )
+
+# Migrate dependency copies that predate the configurable failure-call offset.
+# The first probe is also a window update, so deterministic failure scenarios
+# need to skip it before injecting the requested failure into the line probe.
+if "static unsigned long matchingCalls = 0;" not in source_text:
+    legacy_failure = (
+        "bool consumeWindowFailure(const char *expected) {\n"
+        "  static bool consumed = false;\n"
+        "  if (consumed) return false;\n"
+        "  const char *configured = std::getenv(\"CROSSPOINT_SIM_WINDOW_FAILURE\");\n"
+        "  if (!configured || std::strcmp(configured, expected) != 0) return false;\n"
+        "  consumed = true;\n"
+        "  return true;\n"
+        "}\n"
+    )
+    if legacy_failure not in source_text:
+        raise RuntimeError(f"simulator HAL compatibility patch: missing failure-call migration anchor: {source}")
+    migrated_failure = (
+        "bool consumeWindowFailure(const char *expected) {\n"
+        "  static bool consumed = false;\n"
+        "  static unsigned long matchingCalls = 0;\n"
+        "  if (consumed) return false;\n"
+        "  const char *configured = std::getenv(\"CROSSPOINT_SIM_WINDOW_FAILURE\");\n"
+        "  if (!configured || std::strcmp(configured, expected) != 0) return false;\n"
+        "  ++matchingCalls;\n"
+        "  const char *skipValue = std::getenv(\"CROSSPOINT_SIM_WINDOW_FAILURE_AFTER\");\n"
+        "  const unsigned long skipCalls =\n"
+        "      skipValue ? std::strtoul(skipValue, nullptr, 10) : 0;\n"
+        "  if (matchingCalls <= skipCalls) return false;\n"
+        "  consumed = true;\n"
+        "  return true;\n"
+        "}\n"
+    )
+    source_text = source_text.replace(legacy_failure, migrated_failure, 1)
+
+# Migrate dependency copies whose normal RSVP gate still used the legacy
+# diagnostic-only no-op. The simulator has no panel driver object to query, so
+# its device profiles model the three supported production panels as capable;
+# CROSSPOINT_SIM_DISPLAY_CONTROLLER=uc8179 exercises the safe full-frame
+# fallback through a runtime test adapter.
+legacy_normal_gate = (
+    "#else\n"
+    "  (void)enabled;\n"
+    "#endif\n"
+    "}\n\n"
+    "bool HalDisplay::supportsExperimentalWindowUpdates() const {\n"
+)
+normal_gate = (
+    "#else\n"
+    "  const char *controllerOverride = std::getenv(\"CROSSPOINT_SIM_DISPLAY_CONTROLLER\");\n"
+    "  if (enabled && controllerOverride && std::strcmp(controllerOverride, \"uc8179\") == 0) {\n"
+    "    windowGateFallback = DisplayUpdateFallback::UnsupportedDriver;\n"
+    "  } else if (enabled) {\n"
+    "    windowGateFallback = DisplayUpdateFallback::None;\n"
+    "  }\n"
+    "#endif\n"
+    "}\n\n"
+    "bool HalDisplay::supportsExperimentalWindowUpdates() const {\n"
+)
+if legacy_normal_gate in source_text:
+    source_text = source_text.replace(legacy_normal_gate, normal_gate, 1)
 
 if "bool HalDisplay::displayGrayscaleBase(GrayscaleMode mode" not in source_text:
     source_anchor = "void HalDisplay::preconditionGrayscale() {}\n"

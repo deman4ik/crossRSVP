@@ -73,4 +73,87 @@ PhysicalRegion toPhysical(const LogicalRegion logical, const Orientation orienta
   return result;
 }
 
+LogicalRegion inkBounds(const uint8_t* framebuffer, const uint16_t panelWidth, const uint16_t panelHeight,
+                        const uint16_t strideBytes, const LogicalRegion safeLogical, const Orientation orientation) {
+  if (framebuffer == nullptr || panelWidth == 0 || panelHeight == 0 || (panelWidth & 0x7u) != 0) return {};
+  const uint32_t minimumStride = (static_cast<uint32_t>(panelWidth) + 7u) / 8u;
+  if (strideBytes < minimumStride) return {};
+
+  const PhysicalRegion safePhysical = toPhysical(safeLogical, orientation, panelWidth, panelHeight);
+  if (!safePhysical.valid()) return {};
+
+  uint16_t minPhysicalX = 0;
+  uint16_t maxPhysicalX = 0;
+  uint16_t minPhysicalY = 0;
+  uint16_t maxPhysicalY = 0;
+  bool foundInk = false;
+  const uint32_t physicalYEnd = static_cast<uint32_t>(safePhysical.y) + safePhysical.height;
+  const uint32_t physicalXEnd = static_cast<uint32_t>(safePhysical.x) + safePhysical.width;
+  for (uint32_t physicalY = safePhysical.y; physicalY < physicalYEnd; ++physicalY) {
+    const uint8_t* row = framebuffer + physicalY * strideBytes;
+    for (uint32_t physicalX = safePhysical.x; physicalX < physicalXEnd; ++physicalX) {
+      const uint8_t byte = row[physicalX / 8u];
+      const uint8_t mask = static_cast<uint8_t>(0x80u >> (physicalX & 0x7u));
+      if ((byte & mask) != 0) continue;
+      const auto x = static_cast<uint16_t>(physicalX);
+      const auto y = static_cast<uint16_t>(physicalY);
+      if (!foundInk) {
+        minPhysicalX = maxPhysicalX = x;
+        minPhysicalY = maxPhysicalY = y;
+        foundInk = true;
+      } else {
+        if (x < minPhysicalX) minPhysicalX = x;
+        if (x > maxPhysicalX) maxPhysicalX = x;
+        if (y < minPhysicalY) minPhysicalY = y;
+        if (y > maxPhysicalY) maxPhysicalY = y;
+      }
+    }
+  }
+  if (!foundInk) return {};
+
+  int32_t minLogicalX = 0;
+  int32_t maxLogicalX = 0;
+  int32_t minLogicalY = 0;
+  int32_t maxLogicalY = 0;
+  bool firstLogicalPoint = true;
+  const auto includeLogicalPoint = [&](const uint16_t physicalX, const uint16_t physicalY) {
+    int32_t logicalX = 0;
+    int32_t logicalY = 0;
+    switch (orientation) {
+      case Orientation::Portrait:
+        logicalX = static_cast<int32_t>(panelHeight) - 1 - physicalY;
+        logicalY = physicalX;
+        break;
+      case Orientation::LandscapeClockwise:
+        logicalX = static_cast<int32_t>(panelWidth) - 1 - physicalX;
+        logicalY = static_cast<int32_t>(panelHeight) - 1 - physicalY;
+        break;
+      case Orientation::PortraitInverted:
+        logicalX = physicalY;
+        logicalY = static_cast<int32_t>(panelWidth) - 1 - physicalX;
+        break;
+      case Orientation::LandscapeCounterClockwise:
+        logicalX = physicalX;
+        logicalY = physicalY;
+        break;
+    }
+    if (firstLogicalPoint) {
+      minLogicalX = maxLogicalX = logicalX;
+      minLogicalY = maxLogicalY = logicalY;
+      firstLogicalPoint = false;
+      return;
+    }
+    if (logicalX < minLogicalX) minLogicalX = logicalX;
+    if (logicalX > maxLogicalX) maxLogicalX = logicalX;
+    if (logicalY < minLogicalY) minLogicalY = logicalY;
+    if (logicalY > maxLogicalY) maxLogicalY = logicalY;
+  };
+  includeLogicalPoint(minPhysicalX, minPhysicalY);
+  includeLogicalPoint(maxPhysicalX, minPhysicalY);
+  includeLogicalPoint(minPhysicalX, maxPhysicalY);
+  includeLogicalPoint(maxPhysicalX, maxPhysicalY);
+
+  return {minLogicalX, minLogicalY, maxLogicalX - minLogicalX + 1, maxLogicalY - minLogicalY + 1};
+}
+
 }  // namespace display_region

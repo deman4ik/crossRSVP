@@ -59,9 +59,6 @@ bool isSkippableNonTextPause(const rsvp::PauseReason reason) {
          reason == rsvp::PauseReason::HorizontalRule || reason == rsvp::PauseReason::OtherContent;
 }
 
-#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
-constexpr char WINDOW_REPORT_PATH[] = "/.crosspoint/rsvp-window-test.csv";
-
 GfxRenderer::LogicalRegion unionRegions(const GfxRenderer::LogicalRegion& lhs, const GfxRenderer::LogicalRegion& rhs) {
   const int32_t left = std::min(lhs.x, rhs.x);
   const int32_t top = std::min(lhs.y, rhs.y);
@@ -69,6 +66,9 @@ GfxRenderer::LogicalRegion unionRegions(const GfxRenderer::LogicalRegion& lhs, c
   const int32_t bottom = std::max(lhs.y + lhs.height, rhs.y + rhs.height);
   return {left, top, right - left, bottom - top};
 }
+
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+constexpr char WINDOW_REPORT_PATH[] = "/.crosspoint/rsvp-window-test.csv";
 
 rsvp::WindowActualRefresh actualRefresh(const HalDisplay::DisplayUpdateKind kind) {
   switch (kind) {
@@ -84,7 +84,42 @@ rsvp::WindowActualRefresh actualRefresh(const HalDisplay::DisplayUpdateKind kind
   return rsvp::WindowActualRefresh::None;
 }
 
+rsvp::WindowActualRefresh requestedRefresh(const HalDisplay::DisplayUpdateKind kind) { return actualRefresh(kind); }
+
+rsvp::WindowDiagnosticError diagnosticError(const HalDisplay::DisplayUpdateError error) {
+  switch (error) {
+    case HalDisplay::DisplayUpdateError::None:
+      return rsvp::WindowDiagnosticError::None;
+    case HalDisplay::DisplayUpdateError::InvalidRegion:
+      return rsvp::WindowDiagnosticError::InvalidRegion;
+    case HalDisplay::DisplayUpdateError::BusyNotReady:
+      return rsvp::WindowDiagnosticError::BusyNotReady;
+    case HalDisplay::DisplayUpdateError::BusyTimeout:
+      return rsvp::WindowDiagnosticError::BusyTimeout;
+  }
+  return rsvp::WindowDiagnosticError::Other;
+}
+
+rsvp::WindowDiagnosticTrace diagnosticTrace(const GfxRenderer::DisplayUpdateTrace& source) {
+  return {.valid = source.valid,
+          .phase = static_cast<uint8_t>(source.phase),
+          .stage = static_cast<uint8_t>(source.stage),
+          .error = static_cast<uint8_t>(source.error),
+          .wait = static_cast<uint8_t>(source.wait),
+          .busyBefore = source.busyBefore,
+          .busyAfter = source.busyAfter,
+          .baselineBefore = static_cast<uint8_t>(source.baselineBefore),
+          .baselineAfter = static_cast<uint8_t>(source.baselineAfter),
+          .x = source.x,
+          .y = source.y,
+          .width = source.width,
+          .height = source.height,
+          .payloadBytes = source.payloadBytes,
+          .refreshTriggered = source.refreshTriggered};
+}
+
 rsvp::WindowFallback windowFallback(const HalDisplay::DisplayUpdateResult& result) {
+  if (result.error == HalDisplay::DisplayUpdateError::BusyNotReady) return rsvp::WindowFallback::BusyNotReady;
   if (result.error == HalDisplay::DisplayUpdateError::BusyTimeout) return rsvp::WindowFallback::BusyTimeout;
   if (result.error == HalDisplay::DisplayUpdateError::InvalidRegion) return rsvp::WindowFallback::InvalidGeometry;
   if (result.error != HalDisplay::DisplayUpdateError::None) return rsvp::WindowFallback::ControllerError;
@@ -164,6 +199,8 @@ const char* fallbackDisplayName(const rsvp::WindowFallback fallback) {
       return tr(STR_RSVP_WINDOW_FALLBACK_GEOMETRY);
     case rsvp::WindowFallback::InvalidBaseline:
       return tr(STR_RSVP_WINDOW_FALLBACK_BASELINE);
+    case rsvp::WindowFallback::BusyNotReady:
+      return tr(STR_RSVP_WINDOW_FALLBACK_ERROR);
     case rsvp::WindowFallback::BusyTimeout:
       return tr(STR_RSVP_WINDOW_FALLBACK_TIMEOUT);
     case rsvp::WindowFallback::ControllerError:
@@ -288,9 +325,12 @@ bool RsvpReaderActivity::loadBook() {
   pacing.paceStepWpm = rsvp::RsvpSpeedProbe::STEP_WPM;
 #endif
 #if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
-  pacing.paceWpm = rsvp::RsvpWindowBenchmark::PACE_WPM;
-  pacing.minimumWpm = rsvp::RsvpWindowBenchmark::PACE_WPM;
-  pacing.maximumWpm = pacing.safeMaximumWpm = rsvp::RsvpWindowBenchmark::PACE_WPM;
+  // The X3 diagnostic measures the display path at its maximum fixture rate.
+  // UINT16_MAX is clamped by RsvpSession but baseIntervalMs() becomes zero,
+  // so no artificial 300 WPM wait hides sub-200 ms window updates.
+  pacing.paceWpm = rsvp::RsvpWindowBenchmark::UNLIMITED_PACE_WPM;
+  pacing.minimumWpm = rsvp::RsvpWindowBenchmark::UNLIMITED_PACE_WPM;
+  pacing.maximumWpm = pacing.safeMaximumWpm = rsvp::RsvpWindowBenchmark::UNLIMITED_PACE_WPM;
   pacing.paceStepWpm = 1;
   windowReturnAnchor = initialAnchor;
 #endif
@@ -321,6 +361,18 @@ bool RsvpReaderActivity::loadBook() {
     LOG_ERR("RSVP", "Failed to allocate session");
     return enterFatalFallback(rsvp::Error::SourceOpen);
   }
+#if !defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) || !CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  // The production line path is opt-in per the runtime-selected driver. A
+  // first checked full frame establishes the driver's differential baseline;
+  // unsupported controllers remain on the existing full-frame path.
+  renderer.setExperimentalWindowUpdates(true);
+  productionWindowEnabled = renderer.supportsExperimentalWindowUpdates();
+  renderer.invalidateWindowBaseline();
+  productionDisplayFailure.store(false, std::memory_order_release);
+  productionDisplayRecoveryRequested.store(false, std::memory_order_release);
+  productionStatusValid = false;
+  presentedRegionValid = false;
+#endif
   if (mappedInput.hasTouch()) {
     controlPanel = makeUniqueNoThrow<RsvpControlPanelUi>(renderer);
     if (!controlPanel) {
@@ -422,6 +474,15 @@ void RsvpReaderActivity::applySettings() {
   pacing = windowPacing;
   renderer.invalidateWindowBaseline();
   presentedRegionValid = false;
+#else
+  // Settings can change orientation, font metrics, grouping, guides, and
+  // therefore the logical line geometry. Require a checked full baseline
+  // before resuming the window candidate.
+  renderer.setExperimentalWindowUpdates(true);
+  productionWindowEnabled = renderer.supportsExperimentalWindowUpdates();
+  renderer.invalidateWindowBaseline();
+  presentedRegionValid = false;
+  productionStatusValid = false;
 #endif
   pacing.clausePausePercent = static_cast<uint16_t>(SETTINGS.rsvpClausePauseTenths) * 10;
   pacing.sentencePausePercent = static_cast<uint16_t>(SETTINGS.rsvpSentencePauseTenths) * 10;
@@ -455,36 +516,90 @@ void RsvpReaderActivity::openSettings() {
 
 #if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
 bool RsvpReaderActivity::restartWindowDiagnostic(const uint32_t nowMs) {
-  renderer.setExperimentalWindowUpdates(windowBenchmark.windowCandidateEnabled());
+  const bool candidateEnabled = windowProbeWindowUpdateRequested || windowBenchmark.windowCandidateEnabled() ||
+                                windowBenchmark.tightCandidateEnabled();
+  renderer.setExperimentalWindowUpdates(candidateEnabled);
   renderer.invalidateWindowBaseline();
   presentedRegionValid = false;
   drawnRegionValid = false;
+  tightRegionValid = false;
   windowHeaderCpuMhz = observedCpuMhz();
+  // The tight optical probe is intentionally tied to the fixture's known
+  // `to` entry: its full resync shows the preceding `horizon`, then the one
+  // queued StepForward presents `to` in the actual tight window update.
+  const rsvp::ResumeAnchor fixtureAnchor =
+      windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightProbe
+          ? rsvp::ResumeAnchor{.spineIndex = 0, .visibleTextOffset = 2, .sameOffsetOrdinal = 0, .valid = true}
+          : rsvp::ResumeAnchor{};
   session.reset();
-  session = makeUniqueNoThrow<rsvp::RsvpSession>(windowFixtureSource, rsvp::ResumeAnchor{}, windowPacing, false,
+  session = makeUniqueNoThrow<rsvp::RsvpSession>(windowFixtureSource, fixtureAnchor, windowPacing, false,
                                                  &RsvpReaderActivity::fitPresentationGroup, this,
                                                  rsvp::GroupingLanguage::English);
   if (!session) {
     windowBenchmark.fail(nowMs);
+    windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::Error;
     windowDiagnosticRunActive.store(false, std::memory_order_release);
     windowReportPending = true;
     return false;
   }
   currentDecision = session->step({.nowMs = nowMs});
-  windowAutoPlayPending = true;
+  windowAutoPlayPending = windowBenchmark.running();
   panelVisible = false;
   currentDecision.render = true;
   requestUpdate();
   return true;
 }
 
+bool RsvpReaderActivity::queueWindowProbeFrame(const uint32_t nowMs) {
+  if (!session) return false;
+  const auto decision = session->step({.nowMs = nowMs, .action = rsvp::Action::StepForward});
+  if (!decision.render) {
+    windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::Error;
+    windowDiagnosticRunActive.store(false, std::memory_order_release);
+    windowProbePresentationPending = false;
+    windowProbeAwaitingConfirm = false;
+    windowProbeConfirmArmed = false;
+    windowProbeFreshConfirmRequired = false;
+    windowProbeWindowUpdateRequested = false;
+    windowBenchmark.fail(nowMs);
+    windowReportPending = true;
+    currentDecision = decision;
+    currentDecision.render = true;
+    requestUpdate();
+    return false;
+  }
+  windowProbeWindowUpdateRequested = true;
+  windowProbePresentationPending = true;
+  windowProbeAwaitingConfirm = false;
+  windowProbeConfirmArmed = false;
+  windowProbeFreshConfirmRequired = false;
+  renderer.setExperimentalWindowUpdates(true);
+  applyDecision(decision);
+  return true;
+}
+
 void RsvpReaderActivity::startWindowDiagnostic(const uint32_t nowMs) {
   windowDiagnosticStarted = true;
+  windowReportPending = false;
   windowReportSaved = false;
   windowReportFailed = false;
+  windowDiagnosticState.reset();
+  windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::FullSizePtl;
+  windowProbePresentationPending = false;
+  windowProbeAwaitingConfirm = false;
+  windowProbeConfirmArmed = false;
+  windowProbeFreshConfirmRequired = false;
+  windowProbeWindowUpdateRequested = false;
+  windowProbeAdvanceRequested = false;
+  windowFailureAwaitingUser = false;
+  windowFailureConfirmArmed = false;
+  windowFailureRecoveryRequested = false;
+  windowFullProbeConfirmed = false;
+  windowLineProbeConfirmed = false;
+  windowTightProbeConfirmed = false;
   checkedDisplayFailure.store(false, std::memory_order_release);
   windowDiagnosticRunActive.store(true, std::memory_order_release);
-  windowBenchmark.start(nowMs);
+  windowBenchmark.reset();
   restartWindowDiagnostic(nowMs);
 }
 
@@ -493,12 +608,120 @@ void RsvpReaderActivity::updateWindowDiagnostic(const uint32_t nowMs) {
     finishWindowDiagnostic(false, nowMs);
     return;
   }
+  switch (windowBenchmark.currentPhase()) {
+    case rsvp::WindowBenchmarkPhase::FullWarmup:
+      windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::FullWarmup;
+      break;
+    case rsvp::WindowBenchmarkPhase::FullMeasurement:
+      windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::FullMeasurement;
+      break;
+    case rsvp::WindowBenchmarkPhase::WindowWarmup:
+      windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::WindowWarmup;
+      break;
+    case rsvp::WindowBenchmarkPhase::WindowMeasurement:
+      windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::WindowMeasurement;
+      break;
+    case rsvp::WindowBenchmarkPhase::TightProbe:
+      windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::TightProbe;
+      break;
+    case rsvp::WindowBenchmarkPhase::TightWarmup:
+      windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::TightWarmup;
+      break;
+    case rsvp::WindowBenchmarkPhase::TightMeasurement:
+      windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::TightMeasurement;
+      break;
+    default:
+      break;
+  }
+  windowProbeWindowUpdateRequested = false;
+  windowProbePresentationPending = false;
+  windowProbeAwaitingConfirm = false;
+  windowProbeConfirmArmed = false;
+  windowProbeFreshConfirmRequired = false;
   restartWindowDiagnostic(nowMs);
 }
 
+void RsvpReaderActivity::advanceWindowProbe(const uint32_t nowMs) {
+  if (!windowProbeAwaitingConfirm || windowFailureAwaitingUser) return;
+  const bool preservingTightBaseline = windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightProbe;
+  windowProbeAdvanceRequested = false;
+  windowProbeAwaitingConfirm = false;
+  windowProbeConfirmArmed = false;
+  windowProbeFreshConfirmRequired = false;
+  windowProbePresentationPending = true;
+  windowProbeWindowUpdateRequested = false;
+  renderer.setExperimentalWindowUpdates(false);
+  if (!preservingTightBaseline) {
+    renderer.invalidateWindowBaseline();
+    presentedRegionValid = false;
+  }
+
+  if (windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::FullSizePtl) {
+    // The full-size PTL image is accepted first; only a confirmed visual
+    // result may move the fixture to the line candidate.
+    windowFullProbeConfirmed = true;
+    windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::LineCandidate;
+    if (!session) {
+      windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::Error;
+      windowDiagnosticRunActive.store(false, std::memory_order_release);
+      windowProbePresentationPending = false;
+      windowBenchmark.fail(nowMs);
+      windowReportPending = true;
+      currentDecision = {};
+      currentDecision.render = true;
+      requestUpdate();
+      return;
+    }
+    const auto decision = session->step({.nowMs = nowMs, .action = rsvp::Action::StepForward});
+    if (!decision.render) {
+      windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::Error;
+      windowDiagnosticRunActive.store(false, std::memory_order_release);
+      windowReportPending = true;
+      currentDecision = decision;
+      currentDecision.render = true;
+      requestUpdate();
+      return;
+    }
+    applyDecision(decision);
+    return;
+  }
+
+  if (windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::LineCandidate) {
+    // The second confirmation starts the existing bounded A/B run. Its first
+    // frame is a new full-size baseline before the candidate window branch.
+    windowLineProbeConfirmed = true;
+    windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::FullWarmup;
+    windowProbePresentationPending = false;
+    windowBenchmark.start(nowMs);
+    restartWindowDiagnostic(nowMs);
+    return;
+  }
+
+  if (windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightProbe) {
+    // The tight candidate is opt-in as well. Its first checked presentation is
+    // a full resync; only the following confirmed update may enter the tight
+    // measurement phases.
+    windowTightProbeConfirmed = true;
+    windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::TightWarmup;
+    windowProbePresentationPending = false;
+    windowBenchmark.startTight(nowMs);
+    restartWindowDiagnostic(nowMs);
+  }
+}
+
 void RsvpReaderActivity::finishWindowDiagnostic(const bool aborted, const uint32_t nowMs) {
-  if (aborted) windowBenchmark.abort(nowMs);
+  if (aborted && windowBenchmark.running()) windowBenchmark.abort(nowMs);
+  windowDiagnosticPhase = aborted ? rsvp::WindowDiagnosticPhase::Aborted : rsvp::WindowDiagnosticPhase::Complete;
   windowDiagnosticRunActive.store(false, std::memory_order_release);
+  windowProbePresentationPending = false;
+  windowProbeAwaitingConfirm = false;
+  windowProbeConfirmArmed = false;
+  windowProbeFreshConfirmRequired = false;
+  windowProbeWindowUpdateRequested = false;
+  windowProbeAdvanceRequested = false;
+  windowFailureAwaitingUser = false;
+  windowFailureConfirmArmed = false;
+  windowFailureRecoveryRequested = false;
   renderer.setExperimentalWindowUpdates(false);
   renderer.invalidateWindowBaseline();
   presentedRegionValid = false;
@@ -517,22 +740,37 @@ bool RsvpReaderActivity::writeWindowDiagnosticReport() {
   HalFile file;
   if (!Storage.openFileForWrite("RSVP-WINDOW", WINDOW_REPORT_PATH, file)) return false;
   const auto detection = renderer.controllerDetection();
+  const char* diagnosticStatus = windowFailureAwaitingUser                                        ? "awaiting_recovery"
+                                 : windowProbeAwaitingConfirm                                     ? "awaiting_confirm"
+                                 : windowDiagnosticRunActive.load(std::memory_order_acquire)      ? "running"
+                                 : windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Complete ? "complete"
+                                 : windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Aborted  ? "aborted"
+                                                                                                  : "stopped";
   HalFileReportSink sink(file);
-  const bool wrote = rsvp::writeRsvpWindowReport(sink, windowBenchmark,
-                                                 {.controller = controllerName(detection.controller),
-                                                  .confidence = confidenceName(detection.confidence),
-                                                  .orientation = orientationName(renderer.getOrientation()),
-                                                  .power = "not_sampled",
-                                                  .targetWpm = rsvp::RsvpWindowBenchmark::PACE_WPM});
+  const bool wrote =
+      rsvp::writeRsvpWindowReport(sink, windowBenchmark,
+                                  {.controller = controllerName(detection.controller),
+                                   .confidence = confidenceName(detection.confidence),
+                                   .orientation = orientationName(renderer.getOrientation()),
+                                   .power = "not_sampled",
+                                   .targetWpm = rsvp::RsvpWindowBenchmark::REPORT_TARGET_WPM,
+                                   .firmwareVersion = CROSSPOINT_VERSION,
+                                   .diagnosticStage = rsvp::windowDiagnosticPhaseName(windowDiagnosticPhase),
+                                   .diagnosticStatus = diagnosticStatus,
+                                   .fullProbeConfirmed = windowFullProbeConfirmed,
+                                   .lineProbeConfirmed = windowLineProbeConfirmed,
+                                   .tightProbeConfirmed = windowTightProbeConfirmed},
+                                  windowDiagnosticState);
   file.flush();
   return file.close() && wrote;
 }
+
+#endif
 
 void RsvpReaderActivity::setDrawnRegion(const int left, const int top, const int right, const int bottom) {
   drawnRegion = {left, top, right - left, bottom - top};
   drawnRegionValid = drawnRegion.width > 0 && drawnRegion.height > 0;
 }
-#endif
 
 void RsvpReaderActivity::loop() {
   if (fatalFallbackReady.exchange(false)) {
@@ -545,25 +783,40 @@ void RsvpReaderActivity::loop() {
   {
     RenderLock diagnosticLock(false);
     if (diagnosticLock.ownsLock()) {
-      if (windowAbortRequested && windowBenchmark.running()) {
+      if (windowAbortRequested && windowDiagnosticStarted) {
         windowAbortRequested = false;
         finishWindowDiagnostic(true, millis());
         return;
       }
-      if (windowStartRequested && !windowBenchmark.running() &&
+      const bool canStartWindowDiagnostic = windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Ready ||
+                                            windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Complete ||
+                                            windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Aborted ||
+                                            windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Error;
+      if (windowStartRequested && canStartWindowDiagnostic && !windowFailureAwaitingUser &&
           !checkedDisplayFailure.load(std::memory_order_acquire)) {
         windowStartRequested = false;
         startWindowDiagnostic(millis());
         return;
       }
-      if (windowReportPending) {
+      if (windowProbeAdvanceRequested && windowProbeAwaitingConfirm && !windowFailureAwaitingUser) {
+        windowProbeAdvanceRequested = false;
+        advanceWindowProbe(millis());
+        return;
+      }
+      const bool reportMayWrite =
+          !windowFailureAwaitingUser ||
+          (checkedDisplayFailure.load(std::memory_order_acquire) && renderer.checkedDisplayReady());
+      if (windowReportPending && reportMayWrite) {
         windowReportPending = false;
         windowReportSaved = writeWindowDiagnosticReport();
         windowReportFailed = !windowReportSaved;
-        currentDecision.render = true;
-        requestUpdate();
+        if (!windowFailureAwaitingUser) {
+          currentDecision.render = true;
+          requestUpdate();
+        }
       }
-      if (checkedDisplayFailure.load(std::memory_order_acquire) && renderer.checkedDisplayReady()) {
+      if (checkedDisplayFailure.load(std::memory_order_acquire) && windowFailureRecoveryRequested &&
+          renderer.checkedDisplayReady()) {
         currentDecision.render = true;
         requestUpdate();
       }
@@ -602,7 +855,8 @@ void RsvpReaderActivity::loop() {
 #endif
   const bool swallowedTouchRelease = swallowTouchRelease && mappedInput.wasScreenTouchReleased();
   if (swallowedTouchRelease) swallowTouchRelease = false;
-  if (controlPanel && panelVisible && !swallowTouchRelease && !swallowedTouchRelease && !pauseTouchPending) {
+  if (controlPanel && panelVisible && !productionDisplayFailure.load(std::memory_order_acquire) &&
+      !swallowTouchRelease && !swallowedTouchRelease && !pauseTouchPending) {
     const auto panelEvent = controlPanel->route(mappedInput);
     if (panelEvent != RsvpControlPanelUi::Event::None) {
 #if defined(SIMULATOR)
@@ -652,7 +906,8 @@ void RsvpReaderActivity::loop() {
       return;
     }
   }
-  if (controlPanel && currentDecision.state == rsvp::State::Playing) {
+  if (controlPanel && currentDecision.state == rsvp::State::Playing &&
+      !productionDisplayFailure.load(std::memory_order_acquire)) {
     int touchX = 0;
     int touchY = 0;
     int marginTop = 0;
@@ -680,24 +935,88 @@ void RsvpReaderActivity::loop() {
   const bool windowConfirmLongPressed =
       currentDecision.state != rsvp::State::Playing &&
       mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, ReaderUtils::SKIP_HOLD_MS);
-  if (windowConfirmLongPressed && !windowBenchmark.running()) {
+  if (windowConfirmLongPressed &&
+      (windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Ready ||
+       windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Complete ||
+       windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Aborted ||
+       windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Error) &&
+      !checkedDisplayFailure.load(std::memory_order_acquire)) {
     windowStartRequested = true;
     return;
   }
-  const bool windowConfirmReleased =
-      windowBenchmark.running() && mappedInput.wasReleased(MappedInputManager::Button::Confirm);
-  if (windowConfirmReleased) {
+  // A probe can finish while Confirm is still held. Require the button to be
+  // observed up after the successful update before accepting a new
+  // press/release pair, so the start hold or a press during rendering can
+  // never advance the next probe.
+  if (windowProbeAwaitingConfirm && windowProbeFreshConfirmRequired &&
+      !mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+    mappedInput.wasReleased(MappedInputManager::Button::Confirm);
+    windowProbeFreshConfirmRequired = false;
+  }
+  const bool freshProbeInput = !windowProbeFreshConfirmRequired;
+  const bool windowConfirmPressed = freshProbeInput && mappedInput.wasPressed(MappedInputManager::Button::Confirm);
+  if (windowFailureAwaitingUser && windowConfirmPressed) windowFailureConfirmArmed = true;
+  if (windowProbeAwaitingConfirm && windowConfirmPressed) windowProbeConfirmArmed = true;
+  const bool windowConfirmReleased = freshProbeInput && mappedInput.wasReleased(MappedInputManager::Button::Confirm);
+  if (windowConfirmReleased && checkedDisplayFailure.load(std::memory_order_acquire) && windowFailureAwaitingUser &&
+      windowFailureConfirmArmed) {
+    windowFailureConfirmArmed = false;
+    windowFailureRecoveryRequested = true;
+    return;
+  }
+  if (windowConfirmReleased && windowProbeAwaitingConfirm && windowProbeConfirmArmed) {
+    windowProbeConfirmArmed = false;
+    windowProbeAdvanceRequested = true;
+    return;
+  }
+  if (windowConfirmReleased && windowBenchmark.running()) {
     windowAbortRequested = true;
     return;
   }
 #endif
-  if (mappedInput.wasLongPressed(MappedInputManager::Button::Back, ReaderUtils::GO_BACK_OR_HOME_MS)) {
+  const bool backLongPressed =
+      mappedInput.wasLongPressed(MappedInputManager::Button::Back, ReaderUtils::GO_BACK_OR_HOME_MS);
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  if (backLongPressed && windowDiagnosticStarted && windowFailureAwaitingUser) {
+    // A held Back is still a recovery request while a checked display failure
+    // owns the activity; never queue Exit until that latch has cleared.
+    windowFailureConfirmArmed = false;
+    windowFailureRecoveryRequested = true;
+    return;
+  }
+  const bool diagnosticActive = windowDiagnosticStarted &&
+                                windowDiagnosticPhase != rsvp::WindowDiagnosticPhase::Ready &&
+                                windowDiagnosticPhase != rsvp::WindowDiagnosticPhase::Complete &&
+                                windowDiagnosticPhase != rsvp::WindowDiagnosticPhase::Aborted &&
+                                windowDiagnosticPhase != rsvp::WindowDiagnosticPhase::Error;
+  if (backLongPressed && diagnosticActive && !windowFailureAwaitingUser) {
+    // Finish through the same locked abort path as a short Back release. This
+    // prevents a held Back from queuing Exit and bypassing report generation.
+    windowAbortRequested = true;
+    return;
+  }
+#endif
+  if (backLongPressed) {
     if (!pendingActions.push(rsvp::Action::Exit)) LOG_ERR("RSVP", "Pending action buffer full");
   } else {
     const auto queueInputAction = [this](const bool triggered, const rsvp::Action action) {
       if (triggered && !pendingActions.push(action)) LOG_ERR("RSVP", "Pending action buffer full");
     };
-    queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::Back), rsvp::Action::ModeSwitch);
+    const bool backReleased = mappedInput.wasReleased(MappedInputManager::Button::Back);
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+    if (backReleased && windowDiagnosticStarted && windowFailureAwaitingUser) {
+      windowFailureConfirmArmed = false;
+      windowFailureRecoveryRequested = true;
+      return;
+    }
+    if (backReleased && windowDiagnosticStarted &&
+        (windowProbeAwaitingConfirm || windowProbePresentationPending || windowBenchmark.running())) {
+      windowProbeConfirmArmed = false;
+      windowAbortRequested = true;
+      return;
+    }
+#endif
+    queueInputAction(backReleased, rsvp::Action::ModeSwitch);
 #if !defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) || !CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
     queueInputAction(mappedInput.wasReleased(MappedInputManager::Button::Confirm), rsvp::Action::TogglePlayback);
 #endif
@@ -712,6 +1031,18 @@ void RsvpReaderActivity::loop() {
   // unverified controller. Activity transitions and modal redraws resume only
   // after the locked readiness path clears this latch.
   if (checkedDisplayFailure.load(std::memory_order_acquire)) return;
+#else
+  // Keep all input queued while a checked presentation is awaiting recovery.
+  // Readiness only schedules the same pending frame for a checked full
+  // resync; the latch is cleared by renderBook after that resync succeeds.
+  if (productionDisplayFailure.load(std::memory_order_acquire)) {
+    if (!productionDisplayRecoveryRequested.load(std::memory_order_acquire) && renderer.checkedDisplayReady()) {
+      productionDisplayRecoveryRequested.store(true, std::memory_order_release);
+      currentDecision.render = true;
+      requestUpdate();
+    }
+    return;
+  }
 #endif
 
   if (checkpointRequestedFromRender.load(std::memory_order_acquire)) {
@@ -825,6 +1156,12 @@ void RsvpReaderActivity::switchToPaged() {
       bookPath, false,
       ReaderLaunchContext{ReaderLaunchMode::Paged, windowReturnAnchor, false, 0, 0, false, false, bookRevision});
   return;
+#else
+  renderer.setExperimentalWindowUpdates(false);
+  renderer.invalidateWindowBaseline();
+  productionWindowEnabled = false;
+  presentedRegionValid = false;
+  productionStatusValid = false;
 #endif
   if (switchToNativeProgress) {
     checkpointWritesDisabled = true;
@@ -855,6 +1192,12 @@ void RsvpReaderActivity::onExit() {
   renderer.setExperimentalWindowUpdates(false);
   renderer.invalidateWindowBaseline();
   presentedRegionValid = false;
+#else
+  renderer.setExperimentalWindowUpdates(false);
+  renderer.invalidateWindowBaseline();
+  productionWindowEnabled = false;
+  presentedRegionValid = false;
+  productionStatusValid = false;
 #endif
   if (currentDecision.state == rsvp::State::Finished) {
     if (!finalizeCompletedBook()) LOG_ERR("RSVP", "Failed to finalize completed book on exit");
@@ -901,6 +1244,10 @@ void RsvpReaderActivity::onSystemModalOpening() {
 #if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
   renderer.invalidateWindowBaseline();
   presentedRegionValid = false;
+#else
+  renderer.invalidateWindowBaseline();
+  presentedRegionValid = false;
+  productionStatusValid = false;
 #endif
   if (controlPanel) panelVisible = true;
 #if defined(SIMULATOR)
@@ -1003,8 +1350,9 @@ rsvp::GroupRange RsvpReaderActivity::fitPresentationGroup(void* context, const r
 }
 
 bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word, const rsvp::PresentationGroup* group) {
-#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
   drawnRegionValid = false;
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  tightRegionValid = false;
 #endif
   if (!measurePresentationGroup(word, group)) return false;
   // Membership was resolved by the session before source consumption.
@@ -1020,7 +1368,6 @@ bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word, const 
   const int reservedBottom = controlPanel ? controlPanel->reservedHeight() : 0;
   const int y = marginTop + (usableBottom - reservedBottom - marginTop - lineHeight) / 2;
   const int companionY = y + (lineHeight - renderer.getLineHeight(companionFontId)) / 2;
-#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
   // Advances do not bound arbitrary SD-font ink overhangs. Use the complete
   // RSVP line width and only narrow vertically; this remains bounded while
   // guaranteeing that old and new companion/active glyph tails are covered.
@@ -1028,16 +1375,13 @@ bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word, const 
   int regionRight = groupLayoutInput.rightBound;
   int regionTop = y;
   int regionBottom = y + lineHeight;
-#endif
   if (group) {
     for (uint8_t index = 0; index < group->count; ++index) {
       if (index == group->activeIndex) continue;
       renderer.drawText(companionFontId, groupLayout.positions[index], companionY, group->tokens[index].text, true,
                         EpdFontFamily::REGULAR);
-#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
       regionTop = std::min(regionTop, companionY);
       regionBottom = std::max(regionBottom, companionY + renderer.getLineHeight(companionFontId));
-#endif
     }
   }
   renderer.drawText(activeFontId, groupLayout.active.prefixX, y, prefixBuffer, true, EpdFontFamily::REGULAR);
@@ -1052,15 +1396,20 @@ bool RsvpReaderActivity::drawPreparedWord(const rsvp::PreparedWord& word, const 
     const int lowerBottom = std::min(usableBottom - 1, y + lineHeight + 22);
     renderer.drawLine(focusX, upperTop, focusX, upperBottom, 2, true);
     renderer.drawLine(focusX, lowerTop, focusX, lowerBottom, 2, true);
-#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
     regionTop = std::min(regionTop, upperTop);
     regionBottom = std::max(regionBottom, lowerBottom + 1);
-#endif
   }
-#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
   static constexpr int REGION_PADDING = 12;
   setDrawnRegion(regionLeft - REGION_PADDING, regionTop - REGION_PADDING, regionRight + REGION_PADDING,
                  regionBottom + REGION_PADDING);
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  const bool tightStage = windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightProbe ||
+                          windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightWarmup ||
+                          windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightMeasurement;
+  if (tightStage && drawnRegionValid) {
+    tightRegion = renderer.inkBounds(drawnRegion);
+    tightRegionValid = tightRegion.width > 0 && tightRegion.height > 0;
+  }
 #endif
   return true;
 }
@@ -1088,29 +1437,44 @@ void RsvpReaderActivity::drawStatus() const {
 #if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
   char status[128];
   const char* phaseText = tr(STR_RSVP_WINDOW_READY);
-  switch (windowBenchmark.currentPhase()) {
-    case rsvp::WindowBenchmarkPhase::FullWarmup:
+  switch (windowDiagnosticPhase) {
+    case rsvp::WindowDiagnosticPhase::FullSizePtl:
+      phaseText = tr(STR_RSVP_WINDOW_PROBE_FULL);
+      break;
+    case rsvp::WindowDiagnosticPhase::LineCandidate:
+      phaseText = tr(STR_RSVP_WINDOW_PROBE_LINE);
+      break;
+    case rsvp::WindowDiagnosticPhase::FullWarmup:
       phaseText = tr(STR_RSVP_WINDOW_FULL_WARMUP);
       break;
-    case rsvp::WindowBenchmarkPhase::FullMeasurement:
+    case rsvp::WindowDiagnosticPhase::FullMeasurement:
       phaseText = tr(STR_RSVP_WINDOW_FULL_RUN);
       break;
-    case rsvp::WindowBenchmarkPhase::WindowWarmup:
+    case rsvp::WindowDiagnosticPhase::WindowWarmup:
       phaseText = tr(STR_RSVP_WINDOW_PARTIAL_WARMUP);
       break;
-    case rsvp::WindowBenchmarkPhase::WindowMeasurement:
+    case rsvp::WindowDiagnosticPhase::WindowMeasurement:
       phaseText = tr(STR_RSVP_WINDOW_PARTIAL_RUN);
       break;
-    case rsvp::WindowBenchmarkPhase::Complete:
+    case rsvp::WindowDiagnosticPhase::TightProbe:
+      phaseText = tr(STR_RSVP_WINDOW_TIGHT_PROBE);
+      break;
+    case rsvp::WindowDiagnosticPhase::TightWarmup:
+      phaseText = tr(STR_RSVP_WINDOW_TIGHT_WARMUP);
+      break;
+    case rsvp::WindowDiagnosticPhase::TightMeasurement:
+      phaseText = tr(STR_RSVP_WINDOW_TIGHT_RUN);
+      break;
+    case rsvp::WindowDiagnosticPhase::Complete:
       phaseText = tr(STR_RSVP_WINDOW_COMPLETE);
       break;
-    case rsvp::WindowBenchmarkPhase::Aborted:
+    case rsvp::WindowDiagnosticPhase::Aborted:
       phaseText = tr(STR_RSVP_WINDOW_ABORTED);
       break;
-    case rsvp::WindowBenchmarkPhase::Error:
+    case rsvp::WindowDiagnosticPhase::Error:
       phaseText = tr(STR_RSVP_WINDOW_ERROR);
       break;
-    case rsvp::WindowBenchmarkPhase::Idle:
+    case rsvp::WindowDiagnosticPhase::Ready:
       break;
   }
   renderer.drawCenteredText(SMALL_FONT_ID, 12, phaseText);
@@ -1128,6 +1492,7 @@ void RsvpReaderActivity::drawStatus() const {
   if (!windowBenchmark.running() && windowBenchmark.currentPhase() != rsvp::WindowBenchmarkPhase::Idle) {
     const auto& full = windowBenchmark.fullStats();
     const auto& window = windowBenchmark.windowStats();
+    const auto& tight = windowBenchmark.tightStats();
     snprintf(status, sizeof(status), tr(STR_RSVP_WINDOW_RESULT_FULL), static_cast<unsigned long>(full.frame.count),
              static_cast<unsigned long>(full.frame.minimumMs), static_cast<unsigned long>(full.frame.meanMs()),
              static_cast<unsigned long>(full.frame.maximumMs), static_cast<unsigned long>(full.framesPerMinute()));
@@ -1136,26 +1501,50 @@ void RsvpReaderActivity::drawStatus() const {
              static_cast<unsigned long>(window.frame.minimumMs), static_cast<unsigned long>(window.frame.meanMs()),
              static_cast<unsigned long>(window.frame.maximumMs), static_cast<unsigned long>(window.framesPerMinute()));
     renderer.drawCenteredText(SMALL_FONT_ID, 21 + renderer.getLineHeight(SMALL_FONT_ID) * 3, status);
-    const auto fallback = window.fallbackCount != 0 ? window.lastFallback : full.lastFallback;
+    snprintf(status, sizeof(status), tr(STR_RSVP_WINDOW_RESULT_TIGHT), static_cast<unsigned long>(tight.frame.count),
+             static_cast<unsigned long>(tight.frame.minimumMs), static_cast<unsigned long>(tight.frame.meanMs()),
+             static_cast<unsigned long>(tight.frame.maximumMs), static_cast<unsigned long>(tight.framesPerMinute()));
+    renderer.drawCenteredText(SMALL_FONT_ID, 24 + renderer.getLineHeight(SMALL_FONT_ID) * 4, status);
+    const auto fallback = tight.fallbackCount != 0    ? tight.lastFallback
+                          : window.fallbackCount != 0 ? window.lastFallback
+                                                      : full.lastFallback;
     snprintf(status, sizeof(status), tr(STR_RSVP_WINDOW_RESULT_ACTUAL),
              static_cast<unsigned long>(full.windowCount + window.windowCount),
-             static_cast<unsigned long>(full.fullCount + window.fullCount),
-             static_cast<unsigned long>(full.cleanupCount + window.cleanupCount),
-             static_cast<unsigned long>(full.fallbackCount + window.fallbackCount), fallbackDisplayName(fallback));
-    renderer.drawCenteredText(SMALL_FONT_ID, 24 + renderer.getLineHeight(SMALL_FONT_ID) * 4, status);
-    if (full.cpuSampleCount == 0 && window.cpuSampleCount == 0) {
+             static_cast<unsigned long>(full.fullCount + window.fullCount + tight.fullCount),
+             static_cast<unsigned long>(full.cleanupCount + window.cleanupCount + tight.cleanupCount),
+             static_cast<unsigned long>(full.fallbackCount + window.fallbackCount + tight.fallbackCount),
+             fallbackDisplayName(fallback));
+    renderer.drawCenteredText(SMALL_FONT_ID, 27 + renderer.getLineHeight(SMALL_FONT_ID) * 5, status);
+    if (full.cpuSampleCount == 0 && window.cpuSampleCount == 0 && tight.cpuSampleCount == 0) {
       snprintf(status, sizeof(status), "%s", tr(STR_RSVP_WINDOW_RESULT_CPU_UNAVAILABLE));
     } else {
       snprintf(status, sizeof(status), tr(STR_RSVP_WINDOW_RESULT_CPU), static_cast<unsigned>(full.minimumCpuMhz),
                static_cast<unsigned>(full.maximumCpuMhz), static_cast<unsigned>(window.minimumCpuMhz),
                static_cast<unsigned>(window.maximumCpuMhz));
     }
-    renderer.drawCenteredText(SMALL_FONT_ID, 27 + renderer.getLineHeight(SMALL_FONT_ID) * 5, status);
+    renderer.drawCenteredText(SMALL_FONT_ID, 30 + renderer.getLineHeight(SMALL_FONT_ID) * 6, status);
   }
-  const char* hint = windowBenchmark.currentPhase() == rsvp::WindowBenchmarkPhase::Idle ? tr(STR_RSVP_WINDOW_START_HINT)
-                     : windowReportFailed                                               ? tr(STR_RSVP_WINDOW_CSV_ERROR)
-                     : windowReportSaved                                                ? tr(STR_RSVP_WINDOW_CSV_SAVED)
-                                         : tr(STR_RSVP_WINDOW_ABORT_HINT);
+  if (windowDiagnosticState.lastFailure.valid) {
+    const auto& failure = windowDiagnosticState.lastFailure;
+    snprintf(status, sizeof(status), tr(STR_RSVP_WINDOW_FAILURE_DETAIL), rsvp::windowDiagnosticPhaseName(failure.phase),
+             rsvp::windowDiagnosticOperationName(failure.operation), rsvp::windowActualRefreshName(failure.requested),
+             rsvp::windowActualRefreshName(failure.actual), static_cast<unsigned>(failure.rawError),
+             static_cast<unsigned long>(failure.durationMs));
+    renderer.drawCenteredText(SMALL_FONT_ID, 33 + renderer.getLineHeight(SMALL_FONT_ID) * 7, status);
+    snprintf(status, sizeof(status), tr(STR_RSVP_WINDOW_LAST_SUCCESS),
+             rsvp::windowDiagnosticOperationName(failure.lastSuccessfulOperation));
+    renderer.drawCenteredText(SMALL_FONT_ID, 36 + renderer.getLineHeight(SMALL_FONT_ID) * 8, status);
+  }
+  const bool windowProbePhase = windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::FullSizePtl ||
+                                windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::LineCandidate ||
+                                windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightProbe;
+  const char* hint = windowFailureAwaitingUser ? tr(STR_RSVP_WINDOW_FAILURE_CONFIRM)
+                     : (windowProbePhase || windowProbeAwaitingConfirm || windowProbePresentationPending)
+                         ? tr(STR_RSVP_WINDOW_PROBE_CONFIRM)
+                     : windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Ready ? tr(STR_RSVP_WINDOW_START_HINT)
+                     : windowReportFailed                                          ? tr(STR_RSVP_WINDOW_CSV_ERROR)
+                     : windowReportSaved                                           ? tr(STR_RSVP_WINDOW_CSV_SAVED)
+                                                                                   : tr(STR_RSVP_WINDOW_PROBE_RUNNING);
   renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight() - renderer.getLineHeight(SMALL_FONT_ID) - 12,
                             hint);
 #else
@@ -1190,9 +1579,17 @@ void RsvpReaderActivity::renderBook() {
     (defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC)
   const uint32_t frameStartedAt = millis();
 #endif
-#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
   drawnRegionValid = false;
-  if (checkedDisplayFailure.load(std::memory_order_acquire) && !renderer.checkedDisplayReady()) return;
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  if (checkedDisplayFailure.load(std::memory_order_acquire) &&
+      (!windowFailureRecoveryRequested || !renderer.checkedDisplayReady())) {
+    return;
+  }
+#else
+  if (productionDisplayFailure.load(std::memory_order_acquire) &&
+      !productionDisplayRecoveryRequested.load(std::memory_order_acquire)) {
+    return;
+  }
 #endif
 
   renderer.clearScreen();
@@ -1244,38 +1641,191 @@ void RsvpReaderActivity::renderBook() {
   const auto mode = cleanup ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH;
 #if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
   HalDisplay::DisplayUpdateResult updateResult;
-  const bool useWindow = windowDiagnosticStarted && windowBenchmark.windowCandidateEnabled() && !cleanup &&
-                         message == nullptr && currentDecision.state == rsvp::State::Playing && drawnRegionValid &&
-                         presentedRegionValid &&
+  const bool tightStage = windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightProbe ||
+                          windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightWarmup ||
+                          windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightMeasurement;
+  const bool tightCandidateInvalid = tightStage && message == nullptr && drawnRegionValid && !tightRegionValid;
+  const bool probeWindow = windowDiagnosticStarted && windowProbeWindowUpdateRequested && !cleanup &&
+                           message == nullptr && windowDiagnosticPhase != rsvp::WindowDiagnosticPhase::Ready &&
+                           windowDiagnosticPhase != rsvp::WindowDiagnosticPhase::Error;
+  const bool sustainedWindow = windowDiagnosticStarted && windowBenchmark.windowCandidateEnabled() && !cleanup &&
+                               message == nullptr && currentDecision.state == rsvp::State::Playing;
+  const bool sustainedTightWindow = windowDiagnosticStarted && windowBenchmark.tightCandidateEnabled() && !cleanup &&
+                                    message == nullptr && currentDecision.state == rsvp::State::Playing;
+  const bool useWindow = (probeWindow || sustainedWindow || sustainedTightWindow) && drawnRegionValid &&
+                         !tightCandidateInvalid && presentedRegionValid &&
                          renderer.windowBaselineState() == HalDisplay::WindowBaselineState::Valid;
+  GfxRenderer::LogicalRegion requestedWindowRegion;
+  const auto operation = checkedDisplayFailure.load(std::memory_order_acquire) && windowFailureRecoveryRequested
+                             ? rsvp::WindowDiagnosticOperation::FullRecovery
+                         : useWindow
+                             ? (windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightProbe
+                                    ? rsvp::WindowDiagnosticOperation::TightProbe
+                                : tightStage ? rsvp::WindowDiagnosticOperation::TightWindow
+                                : windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::FullSizePtl
+                                    ? rsvp::WindowDiagnosticOperation::FullSizePtl
+                                    : rsvp::WindowDiagnosticOperation::LineCandidate)
+                             : (windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::FullSizePtl ||
+                                        windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::LineCandidate ||
+                                        windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightProbe ||
+                                        windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightWarmup ||
+                                        windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightMeasurement ||
+                                        windowBenchmark.currentPhase() == rsvp::WindowBenchmarkPhase::FullWarmup ||
+                                        windowBenchmark.currentPhase() == rsvp::WindowBenchmarkPhase::FullMeasurement ||
+                                        windowBenchmark.currentPhase() == rsvp::WindowBenchmarkPhase::WindowWarmup ||
+                                        windowBenchmark.currentPhase() == rsvp::WindowBenchmarkPhase::WindowMeasurement
+                                    ? rsvp::WindowDiagnosticOperation::FullResync
+                                    : rsvp::WindowDiagnosticOperation::FullFrame);
   if (useWindow) {
-    updateResult = renderer.displayWindowChecked(unionRegions(presentedRegion, drawnRegion));
+    if (windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::FullSizePtl) {
+      requestedWindowRegion = {0, 0, renderer.getScreenWidth(), renderer.getScreenHeight()};
+      updateResult = renderer.displayWindowChecked(requestedWindowRegion);
+    } else if (tightStage) {
+      requestedWindowRegion = unionRegions(presentedRegion, tightRegion);
+      updateResult = renderer.displayWindowChecked(requestedWindowRegion);
+    } else {
+      requestedWindowRegion = unionRegions(presentedRegion, drawnRegion);
+      updateResult = renderer.displayWindowChecked(requestedWindowRegion);
+    }
   } else {
     updateResult = renderer.displayBufferChecked(mode);
   }
 #else
   const uint32_t startedAt = millis();
+#if !defined(CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS)
+  HalDisplay::DisplayUpdateResult productionUpdateResult;
+  const bool productionUsedChecked = productionWindowEnabled && renderer.supportsExperimentalWindowUpdates();
+  GfxRenderer::LogicalRegion productionRequestedRegion;
+  const bool productionStatusStable = productionStatusValid && currentDecision.state == productionPresentedState &&
+                                      currentDecision.paceWpm == productionPresentedPaceWpm;
+  const bool productionCanWindow =
+      productionUsedChecked && !productionDisplayFailure.load(std::memory_order_acquire) &&
+      !productionDisplayRecoveryRequested.load(std::memory_order_acquire) &&
+      currentDecision.state == rsvp::State::Playing && currentDecision.pauseReason == rsvp::PauseReason::None &&
+      message == nullptr && !panelVisible && !cleanup && drawnRegionValid && presentedRegionValid &&
+      productionStatusStable && renderer.windowBaselineState() == HalDisplay::WindowBaselineState::Valid;
+  if (productionCanWindow) {
+    productionRequestedRegion = unionRegions(presentedRegion, drawnRegion);
+    productionUpdateResult = renderer.displayWindowChecked(productionRequestedRegion);
+  } else if (productionUsedChecked) {
+    // The first frame, all UI/state transitions, and cleanup frames establish
+    // a checked full baseline before a later line update is allowed.
+    productionUpdateResult = renderer.displayBufferChecked(mode);
+  } else {
+    // Drivers without the checked-window capability retain the existing
+    // blocking full-frame behavior.
+    renderer.displayBuffer(mode);
+  }
+#else
   renderer.displayBuffer(mode);
+#endif
 #endif
   const uint32_t presentedAt = millis();
   const uint32_t duration =
 #if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
       updateResult.durationMs;
+#elif !defined(CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS)
+      productionUsedChecked ? productionUpdateResult.durationMs : presentedAt - startedAt;
 #else
       presentedAt - startedAt;
 #endif
   refreshStats.record(kind, duration);
 
+#if !defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) || !CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+#if !defined(CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS)
+  if (productionUsedChecked) {
+    if (!productionUpdateResult.succeeded()) {
+      // Do not acknowledge a frame after a checked BUSY/error result. The
+      // loop keeps controls queued while it waits for readiness, then asks
+      // renderBook() for a checked full resync of this same frame.
+      renderer.invalidateWindowBaseline();
+      presentedRegionValid = false;
+      productionStatusValid = false;
+      productionDisplayRecoveryRequested.store(false, std::memory_order_release);
+      productionDisplayFailure.store(true, std::memory_order_release);
+      currentDecision.render = false;
+      LOG_ERR("RSVP", "Checked display failed error=%u fallback=%u",
+              static_cast<unsigned>(productionUpdateResult.error),
+              static_cast<unsigned>(productionUpdateResult.fallback));
+      return;
+    }
+#if defined(SIMULATOR)
+    const auto trace = renderer.lastDisplayUpdateTrace();
+    if (trace.valid && productionUpdateResult.actualKind == HalDisplay::DisplayUpdateKind::Window) {
+      LOG_INF("RSVP",
+              "production_roi stage=normal_window frame=%lu logical_x=%ld logical_y=%ld logical_w=%ld "
+              "logical_h=%ld physical_x=%u physical_y=%u physical_w=%u physical_h=%u baseline_before=%u "
+              "baseline_after=%u payload_bytes=%lu refresh_triggered=%u t=%lu",
+              static_cast<unsigned long>(currentDecision.frame.id), static_cast<long>(productionRequestedRegion.x),
+              static_cast<long>(productionRequestedRegion.y), static_cast<long>(productionRequestedRegion.width),
+              static_cast<long>(productionRequestedRegion.height), static_cast<unsigned>(trace.x),
+              static_cast<unsigned>(trace.y), static_cast<unsigned>(trace.width), static_cast<unsigned>(trace.height),
+              static_cast<unsigned>(trace.baselineBefore), static_cast<unsigned>(trace.baselineAfter),
+              static_cast<unsigned long>(trace.payloadBytes), static_cast<unsigned>(trace.refreshTriggered),
+              static_cast<unsigned long>(presentedAt));
+    } else if (trace.valid && (productionUpdateResult.actualKind == HalDisplay::DisplayUpdateKind::Full ||
+                               productionUpdateResult.actualKind == HalDisplay::DisplayUpdateKind::Cleanup)) {
+      LOG_INF("RSVP",
+              "production_display stage=%s frame=%lu actual=%u baseline_before=%u baseline_after=%u "
+              "physical_x=%u physical_y=%u physical_w=%u physical_h=%u payload_bytes=%lu refresh_triggered=%u t=%lu",
+              productionUpdateResult.actualKind == HalDisplay::DisplayUpdateKind::Cleanup ? "normal_cleanup"
+                                                                                          : "normal_full",
+              static_cast<unsigned long>(currentDecision.frame.id),
+              static_cast<unsigned>(productionUpdateResult.actualKind), static_cast<unsigned>(trace.baselineBefore),
+              static_cast<unsigned>(trace.baselineAfter), static_cast<unsigned>(trace.x),
+              static_cast<unsigned>(trace.y), static_cast<unsigned>(trace.width), static_cast<unsigned>(trace.height),
+              static_cast<unsigned long>(trace.payloadBytes), static_cast<unsigned>(trace.refreshTriggered),
+              static_cast<unsigned long>(presentedAt));
+    }
+#endif
+    if (productionDisplayRecoveryRequested.load(std::memory_order_acquire)) {
+      // The recovery latch is released only after the checked full call above
+      // has completed successfully.
+      productionDisplayRecoveryRequested.store(false, std::memory_order_release);
+      productionDisplayFailure.store(false, std::memory_order_release);
+    }
+    if (message == nullptr && currentDecision.state == rsvp::State::Playing && drawnRegionValid && !cleanup) {
+      // Carry only the last frame's successful content. The next request
+      // unions that ROI with the newly drawn line so stale tails are covered
+      // without growing the region across the whole reading session.
+      presentedRegion = drawnRegion;
+      presentedRegionValid = true;
+      productionStatusValid = true;
+      productionPresentedState = currentDecision.state;
+      productionPresentedPaceWpm = currentDecision.paceWpm;
+    } else {
+      presentedRegionValid = false;
+      productionStatusValid = false;
+    }
+  }
+#endif
+#endif
+
 #if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
   const bool updateSucceeded = updateResult.succeeded();
+  const auto diagnosticPhase = windowDiagnosticPhase;
+  const auto trace = diagnosticTrace(renderer.lastDisplayUpdateTrace());
+  windowDiagnosticState.recordAttempt(diagnosticPhase, operation, requestedRefresh(updateResult.requestedKind),
+                                      actualRefresh(updateResult.actualKind), diagnosticError(updateResult.error),
+                                      static_cast<uint8_t>(updateResult.error), duration, updateSucceeded, trace);
   if (!updateSucceeded) {
     windowBenchmark.record(presentedAt, presentedAt - frameStartedAt, duration, actualRefresh(updateResult.actualKind),
                            windowFallback(updateResult), false, observedCpuMhz());
     renderer.invalidateWindowBaseline();
     presentedRegionValid = false;
+    windowProbePresentationPending = false;
+    windowProbeAwaitingConfirm = false;
+    windowProbeConfirmArmed = false;
+    windowProbeFreshConfirmRequired = false;
+    windowProbeWindowUpdateRequested = false;
+    windowFailureAwaitingUser = true;
+    windowFailureConfirmArmed = false;
+    windowProbeAdvanceRequested = false;
+    windowFailureRecoveryRequested = false;
     checkedDisplayFailure.store(true, std::memory_order_release);
     windowDiagnosticRunActive.store(false, std::memory_order_release);
     windowBenchmark.fail(presentedAt);
+    windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::Error;
     windowReportPending = true;
     if (message == nullptr && session) {
       currentDecision = session->step({.nowMs = presentedAt,
@@ -1283,18 +1833,42 @@ void RsvpReaderActivity::renderBook() {
                                        .presentedFrameId = currentDecision.frame.id,
                                        .refreshDurationMs = duration});
     }
+    currentDecision.render = false;
     return;
   }
-  if (checkedDisplayFailure.load(std::memory_order_acquire) &&
-      (updateResult.actualKind == HalDisplay::DisplayUpdateKind::Full ||
-       updateResult.actualKind == HalDisplay::DisplayUpdateKind::Cleanup)) {
+  const auto successfulFallback =
+      tightCandidateInvalid ? rsvp::WindowFallback::InvalidGeometry : windowFallback(updateResult);
+  if (tightCandidateInvalid) {
+    // An empty/invalid ink scan is never a successful tight candidate. Keep
+    // the last valid region untouched and use the checked full update above as
+    // the safe fallback; the tight probe itself must not be auto-confirmed.
+    windowDiagnosticState.recordAttempt(windowDiagnosticPhase,
+                                        windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightProbe
+                                            ? rsvp::WindowDiagnosticOperation::TightProbe
+                                            : rsvp::WindowDiagnosticOperation::TightWindow,
+                                        rsvp::WindowActualRefresh::Window, actualRefresh(updateResult.actualKind),
+                                        rsvp::WindowDiagnosticError::InvalidRegion, 0, duration, false, trace);
+  }
+  const bool recoverySucceeded = operation == rsvp::WindowDiagnosticOperation::FullRecovery && updateSucceeded;
+  if (recoverySucceeded) {
     // Keep navigation, modal UI, and auto-sleep blocked until the checked
     // recovery presentation itself succeeds, not merely until BUSY reads ready.
+    windowFailureAwaitingUser = false;
+    windowFailureRecoveryRequested = false;
     checkedDisplayFailure.store(false, std::memory_order_release);
+    windowReportPending = true;
   }
   if (message == nullptr && drawnRegionValid) {
-    presentedRegion = drawnRegion;
-    presentedRegionValid = true;
+    if (tightStage) {
+      if (tightRegionValid && (updateResult.actualKind == HalDisplay::DisplayUpdateKind::Window ||
+                               updateResult.actualKind == HalDisplay::DisplayUpdateKind::Full)) {
+        presentedRegion = tightRegion;
+        presentedRegionValid = true;
+      }
+    } else {
+      presentedRegion = drawnRegion;
+      presentedRegionValid = true;
+    }
   } else {
     presentedRegionValid = false;
   }
@@ -1354,8 +1928,55 @@ void RsvpReaderActivity::renderBook() {
 #if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
     if (acknowledgement.presentationAccepted) {
       windowBenchmark.record(presentedAt, presentedAt - frameStartedAt, duration,
-                             actualRefresh(updateResult.actualKind), windowFallback(updateResult), true,
-                             observedCpuMhz(), currentDecision.frame.id);
+                             actualRefresh(updateResult.actualKind), successfulFallback, true, observedCpuMhz(),
+                             currentDecision.frame.id);
+    }
+    if (acknowledgement.presentationAccepted && updateResult.actualKind == HalDisplay::DisplayUpdateKind::Window &&
+        trace.valid) {
+      windowBenchmark.recordRoi(trace.width, trace.height);
+#if defined(SIMULATOR)
+      if (windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::WindowMeasurement ||
+          windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightMeasurement ||
+          windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightProbe) {
+        LOG_INF("RSVP", "diagnostic_roi stage=%s frame=%lu x=%d y=%d w=%d h=%d px=%u py=%u pw=%u ph=%u t=%lu",
+                rsvp::windowDiagnosticPhaseName(windowDiagnosticPhase),
+                static_cast<unsigned long>(currentDecision.frame.id), requestedWindowRegion.x, requestedWindowRegion.y,
+                requestedWindowRegion.width, requestedWindowRegion.height, static_cast<unsigned>(trace.x),
+                static_cast<unsigned>(trace.y), static_cast<unsigned>(trace.width), static_cast<unsigned>(trace.height),
+                static_cast<unsigned long>(presentedAt));
+      }
+#endif
+    }
+    if (acknowledgement.presentationAccepted && operation == rsvp::WindowDiagnosticOperation::FullResync &&
+        (windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::FullSizePtl ||
+         windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::LineCandidate)) {
+      queueWindowProbeFrame(presentedAt);
+    } else if (acknowledgement.presentationAccepted && operation == rsvp::WindowDiagnosticOperation::FullResync &&
+               windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightProbe && !tightCandidateInvalid) {
+      queueWindowProbeFrame(presentedAt);
+    } else if (acknowledgement.presentationAccepted && tightCandidateInvalid &&
+               windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightProbe) {
+      windowProbePresentationPending = false;
+      windowProbeAwaitingConfirm = false;
+      windowProbeConfirmArmed = false;
+      windowProbeFreshConfirmRequired = false;
+      windowProbeWindowUpdateRequested = false;
+      windowDiagnosticRunActive.store(false, std::memory_order_release);
+      windowBenchmark.fail(presentedAt);
+      windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::Error;
+      windowReportPending = true;
+      currentDecision.render = false;
+    } else if (acknowledgement.presentationAccepted && (operation == rsvp::WindowDiagnosticOperation::FullSizePtl ||
+                                                        operation == rsvp::WindowDiagnosticOperation::LineCandidate ||
+                                                        operation == rsvp::WindowDiagnosticOperation::TightProbe)) {
+      // Keep the confirmed probe image on the panel until the operator
+      // accepts it. No render is requested here, so a failed word cannot be
+      // hidden by an automatic full redraw.
+      windowProbePresentationPending = false;
+      windowProbeAwaitingConfirm = true;
+      windowProbeConfirmArmed = false;
+      windowProbeFreshConfirmRequired = true;
+      currentDecision.render = false;
     }
     if (acknowledgement.presentationAccepted && windowAutoPlayPending) {
       const auto playing = session->step({.nowMs = presentedAt, .action = rsvp::Action::TogglePlayback});

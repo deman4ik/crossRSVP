@@ -39,12 +39,16 @@ class RsvpReaderActivity final : public ReaderActivity {
     return windowDiagnosticRunActive.load(std::memory_order_acquire) ||
            checkedDisplayFailure.load(std::memory_order_acquire);
 #else
-    return false;
+    return productionDisplayFailure.load(std::memory_order_acquire);
 #endif
   }
+  bool displayRecoveryPending() const override {
 #if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
-  bool displayRecoveryPending() const override { return checkedDisplayFailure.load(std::memory_order_acquire); }
+    return checkedDisplayFailure.load(std::memory_order_acquire);
+#else
+    return productionDisplayFailure.load(std::memory_order_acquire);
 #endif
+  }
 
  private:
   bool loadBook() override;
@@ -69,13 +73,15 @@ class RsvpReaderActivity final : public ReaderActivity {
   bool finalizeCompletedBook();
   void switchToPaged();
   bool enterFatalFallback(rsvp::Error error);
+  void setDrawnRegion(int left, int top, int right, int bottom);
 #if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
   bool restartWindowDiagnostic(uint32_t nowMs);
   void startWindowDiagnostic(uint32_t nowMs);
   void updateWindowDiagnostic(uint32_t nowMs);
+  bool queueWindowProbeFrame(uint32_t nowMs);
+  void advanceWindowProbe(uint32_t nowMs);
   void finishWindowDiagnostic(bool aborted, uint32_t nowMs);
   bool writeWindowDiagnosticReport();
-  void setDrawnRegion(int left, int top, int right, int bottom);
 #endif
 
   std::unique_ptr<Epub> epub;
@@ -86,19 +92,39 @@ class RsvpReaderActivity final : public ReaderActivity {
 #ifdef CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS
   rsvp::RsvpSpeedProbe speedProbe;
 #endif
-#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
-  rsvp::RsvpWindowFixtureSource windowFixtureSource;
-  rsvp::RsvpWindowBenchmark windowBenchmark;
-  rsvp::RsvpPacingConfig windowPacing;
+  // The ordinary RSVP path keeps one logical line ROI so supported drivers
+  // can update the current word without scanning the framebuffer or owning a
+  // second frame. The previous successful ROI is retained to cover tails from
+  // the frame that was just replaced.
   GfxRenderer::LogicalRegion drawnRegion;
   GfxRenderer::LogicalRegion presentedRegion;
   bool drawnRegionValid = false;
   bool presentedRegionValid = false;
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  rsvp::RsvpWindowFixtureSource windowFixtureSource;
+  rsvp::RsvpWindowBenchmark windowBenchmark;
+  rsvp::RsvpPacingConfig windowPacing;
+  GfxRenderer::LogicalRegion tightRegion;
+  bool tightRegionValid = false;
   bool windowDiagnosticStarted = false;
   bool windowAutoPlayPending = false;
   bool windowReportPending = false;
   bool windowReportSaved = false;
   bool windowReportFailed = false;
+  rsvp::WindowDiagnosticState windowDiagnosticState;
+  rsvp::WindowDiagnosticPhase windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::Ready;
+  bool windowProbePresentationPending = false;
+  bool windowProbeAwaitingConfirm = false;
+  bool windowProbeConfirmArmed = false;
+  bool windowProbeFreshConfirmRequired = false;
+  bool windowProbeWindowUpdateRequested = false;
+  bool windowProbeAdvanceRequested = false;
+  bool windowFailureAwaitingUser = false;
+  bool windowFailureConfirmArmed = false;
+  bool windowFailureRecoveryRequested = false;
+  bool windowFullProbeConfirmed = false;
+  bool windowLineProbeConfirmed = false;
+  bool windowTightProbeConfirmed = false;
   std::atomic<bool> checkedDisplayFailure{false};
   std::atomic<bool> windowDiagnosticRunActive{false};
   bool windowStartRequested = false;
@@ -107,6 +133,12 @@ class RsvpReaderActivity final : public ReaderActivity {
   uint16_t windowHeaderCpuMhz = 0;
   rsvp::ResumeAnchor windowReturnAnchor;
 #endif
+  bool productionWindowEnabled = false;
+  bool productionStatusValid = false;
+  rsvp::State productionPresentedState = rsvp::State::Empty;
+  uint16_t productionPresentedPaceWpm = 0;
+  std::atomic<bool> productionDisplayFailure{false};
+  std::atomic<bool> productionDisplayRecoveryRequested{false};
   rsvp::Decision currentDecision;
   bool switchToPagedPending = false;
   bool switchToNativeProgress = false;
