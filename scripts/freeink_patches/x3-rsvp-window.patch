@@ -1894,10 +1894,22 @@ index 966966c409e62bc74a9f6ff7d58026c31e3dd9c2..82e4e1a4c40bc2a0b3086f9cfcff518f
  
  PanelDriver& uc8253X3Driver();
 diff --git a/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.cpp b/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.cpp
-index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf6917ba59 100644
+index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..45cf3d043bf4737e96179e6960ca2bb9788a23de 100644
 --- a/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.cpp
 +++ b/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.cpp
-@@ -242,9 +242,48 @@ Uc8279X4Driver::Uc8279X4Driver(const Uc8279X4Config& cfg)
+@@ -22,6 +22,11 @@
+ #define FREEINK_UC8279X4_XMIRROR 0
+ #endif
+ 
++#if defined(FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM) && FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM
++static_assert(FREEINK_UC8279X4_ROWREV == 0 && FREEINK_UC8279X4_XMIRROR == 0,
++              "UC8279 X4 partial RAM experiment requires the validated forward panel mapping");
++#endif
++
+ namespace freeink {
+ namespace {
+ // UC8279 (800x480 X4 Pro variant) command set — UC81xx KW family, per the vendor
+@@ -242,9 +247,48 @@ Uc8279X4Driver::Uc8279X4Driver(const Uc8279X4Config& cfg)
        _tresH(cfg.tresHeight),
        _bufferSize(static_cast<uint32_t>(BoardConfig::ACTIVE.displayWidth / 8) * BoardConfig::ACTIVE.displayHeight) {}
  
@@ -1946,7 +1958,7 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
  }
  
  PanelGeometry Uc8279X4Driver::geometry() const { return {_w, _h, _wb, _bufferSize}; }
-@@ -296,9 +329,14 @@ void Uc8279X4Driver::begin(EpdBus& bus) {
+@@ -296,9 +340,14 @@ void Uc8279X4Driver::begin(EpdBus& bus) {
    }
    _grayBaseValid = false;
    _absoluteGrayPlanes = false;
@@ -1961,15 +1973,49 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
    // CrossPoint's AA path draws its B/W base with an ordinary Fast paint. Right
    // after an AA page, route that base through stock's non-flashing prev->current
    // transition instead of a plain DU — this keeps the gray edge charge in check
-@@ -347,6 +385,7 @@ void Uc8279X4Driver::streamPlane(EpdBus& bus, uint8_t ramCmd, const uint8_t* fb,
+@@ -347,6 +396,41 @@ void Uc8279X4Driver::streamPlane(EpdBus& bus, uint8_t ramCmd, const uint8_t* fb,
    memset(row, 0xFF, wb);
    for (uint16_t y = _cfg.gateOffset + _h; y < _tresH; y++) bus.rawWriteBytes(row, wb);
    bus.endTxn();
 +  if (_checkedOperationActive) tracePayload(static_cast<uint32_t>(_tresH) * wb);
++}
++
++#if defined(FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM) && FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM
++void Uc8279X4Driver::streamWindowPlane(EpdBus& bus, uint8_t ramCmd, const uint8_t* fb, uint16_t x, uint16_t y,
++                                       uint16_t w, uint16_t h) {
++  const uint16_t firstByte = static_cast<uint16_t>(x / 8);
++  const uint16_t rowBytes = static_cast<uint16_t>(w / 8);
++  bus.cmd(ramCmd);
++  bus.beginTxn();
++  for (uint16_t row = y; row < static_cast<uint16_t>(y + h); ++row) {
++    bus.rawWriteBytes(fb + static_cast<uint32_t>(row) * _wb + firstByte, rowBytes);
++  }
++  bus.endTxn();
++  tracePayload(static_cast<uint32_t>(rowBytes) * h);
++}
++#endif
++
++void Uc8279X4Driver::enterPartialWindow(EpdBus& bus, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
++  const uint16_t xEnd = static_cast<uint16_t>(x + w - 1);
++  const uint16_t yStart = static_cast<uint16_t>(_cfg.gateOffset + y);
++  const uint16_t yEnd = static_cast<uint16_t>(yStart + h - 1);
++  if (_checkedOperationActive) traceStage(DisplayTraceStage::PartialIn);
++  bus.cmd(CMD_PARTIAL_IN);
++  if (_checkedOperationActive) traceStage(DisplayTraceStage::PartialWindow);
++  bus.cmd(CMD_PARTIAL_WINDOW);
++  bus.data(static_cast<uint8_t>(x >> 8));
++  bus.data(static_cast<uint8_t>(x & 0xF8));
++  bus.data(static_cast<uint8_t>(xEnd >> 8));
++  bus.data(static_cast<uint8_t>(xEnd | 0x07));
++  bus.data(static_cast<uint8_t>(yStart >> 8));
++  bus.data(static_cast<uint8_t>(yStart & 0xFF));
++  bus.data(static_cast<uint8_t>(yEnd >> 8));
++  bus.data(static_cast<uint8_t>(yEnd & 0xFF));
++  bus.data(0x01);
  }
  
  // Same geometry/mirroring as streamPlane, but each visible byte is lhs ^ rhs.
-@@ -382,12 +421,22 @@ void Uc8279X4Driver::streamPlaneXor(EpdBus& bus, uint8_t ramCmd, const uint8_t*
+@@ -382,12 +466,30 @@ void Uc8279X4Driver::streamPlaneXor(EpdBus& bus, uint8_t ramCmd, const uint8_t*
  
  void Uc8279X4Driver::powerOnIfNeeded(EpdBus& bus, const char* tag) {
    if (_isScreenOn) return;  // vendor _powerOn(): no second PON while powered
@@ -1990,14 +2036,35 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
  
  bool Uc8279X4Driver::displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode, bool turnOff) {
 +  if (_checkedRecoveryRequired && !_checkedOperationActive) return false;
++#if defined(FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM) && FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM
++  if (_pendingWindowRam && !_checkedWindowActive) {
++    // A failed checked wait may leave PTIN active. A full checked recovery must
++    // restore normal addressing before uploading either complete plane.
++    bus.cmd(CMD_PARTIAL_OUT);
++    _pendingWindowRam = false;
++  }
++#endif
    _absoluteInput = false;
    (void)prev;
    // Snapshot the B/W base for a grayscale overlay that may follow (the reader
-@@ -414,19 +463,24 @@ bool Uc8279X4Driver::displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t*
+@@ -414,19 +516,37 @@ bool Uc8279X4Driver::displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t*
    const bool scrub = (mode == RefreshMode::Half);
    const bool fast = (mode == RefreshMode::Fast) && !_needFullClear && _oldPlaneValid;
  
++#if defined(FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM) && FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM
++  const bool windowRam = fast && _checkedOperationActive && _checkedWindowActive;
++  if (windowRam) {
++    enterPartialWindow(bus, _checkedWindowX, _checkedWindowY, _checkedWindowW, _checkedWindowH);
++    _pendingWindowRam = true;
++  }
++#endif
++
 +  if (_checkedOperationActive) traceStage(DisplayTraceStage::FullDtm2);
++#if defined(FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM) && FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM
++  if (windowRam) {
++    streamWindowPlane(bus, CMD_DTM2, fb, _checkedWindowX, _checkedWindowY, _checkedWindowW, _checkedWindowH);
++  } else
++#endif
    streamPlane(bus, CMD_DTM2, fb);
    if (!fast) {
      if (scrub) {
@@ -2018,7 +2085,7 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
      streamPlane(bus, CMD_DTM1, fb, /*invert=*/true);
    }
    // Consumed: the white-seed (!fast) or the re-drive above already scrubbed any
-@@ -452,18 +506,26 @@ bool Uc8279X4Driver::displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t*
+@@ -452,33 +572,30 @@ bool Uc8279X4Driver::displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t*
    }
  
    powerOnIfNeeded(bus, " 8279x4_PON");
@@ -2031,28 +2098,24 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
 -    const uint16_t xEnd = _w - 1;
 -    const uint16_t yStart = _cfg.gateOffset;
 -    const uint16_t yEnd = _cfg.gateOffset + _h - 1;
-+    const uint16_t xStart = (_checkedOperationActive && _checkedWindowActive) ? _checkedWindowX : 0;
-+    const uint16_t xEnd = (_checkedOperationActive && _checkedWindowActive)
-+                              ? static_cast<uint16_t>(_checkedWindowX + _checkedWindowW - 1)
-+                              : static_cast<uint16_t>(_w - 1);
-+    const uint16_t yStart = static_cast<uint16_t>(_cfg.gateOffset +
-+                                                  ((_checkedOperationActive && _checkedWindowActive) ? _checkedWindowY : 0));
-+    const uint16_t yEnd = static_cast<uint16_t>(yStart +
-+                                                ((_checkedOperationActive && _checkedWindowActive) ? _checkedWindowH : _h) - 1);
-+    if (_checkedOperationActive) traceStage(DisplayTraceStage::PartialIn);
-     bus.cmd(CMD_PARTIAL_IN);
-+    if (_checkedOperationActive) traceStage(DisplayTraceStage::PartialWindow);
-     bus.cmd(CMD_PARTIAL_WINDOW);
+-    bus.cmd(CMD_PARTIAL_IN);
+-    bus.cmd(CMD_PARTIAL_WINDOW);
 -    bus.data(0x00);
 -    bus.data(0x00);  // x start, byte-aligned (& 0xF8)
-+    bus.data(static_cast<uint8_t>(xStart >> 8));
-+    bus.data(static_cast<uint8_t>(xStart & 0xF8));  // x start, byte-aligned
-     bus.data(static_cast<uint8_t>(xEnd >> 8));
-     bus.data(static_cast<uint8_t>(xEnd | 0x07));
-     bus.data(static_cast<uint8_t>(yStart >> 8));
-@@ -472,13 +534,16 @@ bool Uc8279X4Driver::displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t*
-     bus.data(static_cast<uint8_t>(yEnd & 0xFF));
-     bus.data(0x01);
+-    bus.data(static_cast<uint8_t>(xEnd >> 8));
+-    bus.data(static_cast<uint8_t>(xEnd | 0x07));
+-    bus.data(static_cast<uint8_t>(yStart >> 8));
+-    bus.data(static_cast<uint8_t>(yStart & 0xFF));
+-    bus.data(static_cast<uint8_t>(yEnd >> 8));
+-    bus.data(static_cast<uint8_t>(yEnd & 0xFF));
+-    bus.data(0x01);
++#if defined(FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM) && FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM
++    if (!windowRam)
++#endif
++      enterPartialWindow(bus, (_checkedOperationActive && _checkedWindowActive) ? _checkedWindowX : 0,
++                         (_checkedOperationActive && _checkedWindowActive) ? _checkedWindowY : 0,
++                         (_checkedOperationActive && _checkedWindowActive) ? _checkedWindowW : _w,
++                         (_checkedOperationActive && _checkedWindowActive) ? _checkedWindowH : _h);
    }
 +  if (_checkedOperationActive) traceStage(DisplayTraceStage::RefreshSetup);
    bus.cmd(CMD_PANEL_SETTING);
@@ -2068,7 +2131,7 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
      const int8_t busyPin = bus.pins().busy;
      const unsigned long t0 = millis();
      while (digitalRead(busyPin) == HIGH && millis() - t0 < 50) delay(1);
-@@ -493,32 +558,220 @@ void Uc8279X4Driver::displayFinish(EpdBus& bus, const uint8_t* fb) {
+@@ -493,32 +610,233 @@ void Uc8279X4Driver::displayFinish(EpdBus& bus, const uint8_t* fb) {
    if (!_pendingRefresh) return;
    _pendingRefresh = false;
  
@@ -2083,7 +2146,11 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
 +    bus.waitRefreshComplete(" 8279x4_DRF");
 +  }
 +  if (_checkedOperationActive && bus.checkedOperationFailed()) return;
-+  if (_pendingPartial) {
++  if (_pendingPartial
++#if defined(FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM) && FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM
++      && !_pendingWindowRam
++#endif
++  ) {
 +    if (_checkedOperationActive) traceStage(DisplayTraceStage::PartialOut);
 +    bus.cmd(CMD_PARTIAL_OUT);
 +  }
@@ -2091,6 +2158,14 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
    // Sync the OLD plane (0x10) with the just-displayed frame so the NEXT partial
    // diffs against it (same ghosting management as the UC8179 sibling).
 +  if (_checkedOperationActive) traceStage(DisplayTraceStage::FullDtm1);
++#if defined(FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM) && FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM
++  if (_pendingWindowRam) {
++    streamWindowPlane(bus, CMD_DTM1, fb, _checkedWindowX, _checkedWindowY, _checkedWindowW, _checkedWindowH);
++    if (_checkedOperationActive) traceStage(DisplayTraceStage::PartialOut);
++    bus.cmd(CMD_PARTIAL_OUT);
++    _pendingWindowRam = false;
++  } else
++#endif
    streamPlane(bus, CMD_DTM1, fb);
    _oldPlaneValid = true;
    _needFullClear = false;
@@ -2107,12 +2182,12 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
 +    } else {
 +      bus.waitBusy(" 8279x4_POF");
 +    }
-     _isScreenOn = false;
-   }
++    _isScreenOn = false;
++  }
 +  if (!_checkedOperationActive)
 +    _windowBaselineState = _pendingTurnOff ? WindowBaselineState::Invalid : WindowBaselineState::Valid;
- }
- 
++}
++
 +DisplayUpdateResult Uc8279X4Driver::displayChecked(EpdBus& bus, const uint8_t* fb, const uint8_t* prev,
 +                                                   RefreshMode mode, bool turnOff) {
 +  (void)prev;
@@ -2209,7 +2284,8 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
 +    return {DisplayUpdateKind::Window, DisplayUpdateKind::None, DisplayUpdateError::BusyNotReady,
 +            DisplayUpdateFallback::None, 0};
 +  }
-+  if (_checkedRecoveryRequired || _windowBaselineState != WindowBaselineState::Valid || _redriveAfterGray) {
++  if (_checkedRecoveryRequired || _windowBaselineState != WindowBaselineState::Valid || _redriveAfterGray ||
++      _needFullClear || !_oldPlaneValid) {
 +    DisplayUpdateResult fallback = displayChecked(bus, fb, nullptr, RefreshMode::Fast, turnOff);
 +    fallback.requestedKind = DisplayUpdateKind::Window;
 +    fallback.fallback = DisplayUpdateFallback::BaselineInvalid;
@@ -2235,7 +2311,7 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
 +    _checkedRecoveryRequired = true;
 +    _needFullClear = true;
 +    _oldPlaneValid = false;
-+    _isScreenOn = false;
+     _isScreenOn = false;
 +    _windowBaselineState = WindowBaselineState::Invalid;
 +    _lastTrace.wait = DisplayTraceWait::TimedOut;
 +    traceError(DisplayUpdateError::BusyTimeout);
@@ -2257,7 +2333,7 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
 +    return {DisplayUpdateKind::Window,
 +            _lastTrace.refreshTriggered ? DisplayUpdateKind::Window : DisplayUpdateKind::None,
 +            DisplayUpdateError::BusyNotReady, DisplayUpdateFallback::None, duration};
-+  }
+   }
 +
 +  _checkedRecoveryRequired = false;
 +  _windowBaselineState = turnOff ? WindowBaselineState::Invalid : WindowBaselineState::Valid;
@@ -2265,8 +2341,8 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
 +  finishTrace(bus);
 +  return {DisplayUpdateKind::Window, DisplayUpdateKind::Window, DisplayUpdateError::None, DisplayUpdateFallback::None,
 +          duration};
-+}
-+
+ }
+ 
 +bool Uc8279X4Driver::checkedDisplayReady(const EpdBus& bus) const {
 +  return !_pendingRefresh && !bus.isBusy();
 +}
@@ -2293,7 +2369,7 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
    if (_isScreenOn) {
      bus.cmd(CMD_POWER_OFF);
      bus.waitBusy(" 8279x4 power-down");
-@@ -535,12 +788,14 @@ void Uc8279X4Driver::deepSleep(EpdBus& bus) {
+@@ -535,12 +853,14 @@ void Uc8279X4Driver::deepSleep(EpdBus& bus) {
  // conflated them → white-text ghosting). plane0/LSB -> DTM1 (0x10),
  // plane1/MSB -> DTM2 (0x13).
  void Uc8279X4Driver::beginGrayscale(EpdBus& bus, const uint8_t* fb, GrayscaleMode mode, RefreshMode fallback, bool turnOff) {
@@ -2308,7 +2384,7 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
    if (!lsb) return;
    if (_absoluteInput) {
      bus.waitBusy(" absolute plane");
-@@ -569,6 +824,7 @@ void Uc8279X4Driver::copyGrayscaleLsb(EpdBus& bus, const uint8_t* lsb) {
+@@ -569,6 +889,7 @@ void Uc8279X4Driver::copyGrayscaleLsb(EpdBus& bus, const uint8_t* lsb) {
  #endif
  
  void Uc8279X4Driver::copyGrayscaleMsb(EpdBus& bus, const uint8_t* msb) {
@@ -2316,7 +2392,7 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
    if (!msb) return;
    if (_absoluteInput) {
      bus.waitBusy(" absolute plane");
-@@ -597,6 +853,7 @@ void Uc8279X4Driver::copyGrayscaleMsb(EpdBus& bus, const uint8_t* msb) {
+@@ -597,6 +918,7 @@ void Uc8279X4Driver::copyGrayscaleMsb(EpdBus& bus, const uint8_t* msb) {
  
  void Uc8279X4Driver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, const unsigned char* lut,
                                   bool factoryMode) {
@@ -2324,7 +2400,7 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
    (void)lut;  // waveform is a built-in bank (scaled quality or stock xtfAa)
  
    // Vendor AA sequence: PSR (REG=1) -> [planes already in RAM via
-@@ -670,6 +927,7 @@ void Uc8279X4Driver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, c
+@@ -670,6 +992,7 @@ void Uc8279X4Driver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, c
  }
  
  void Uc8279X4Driver::displayGrayscaleBase(EpdBus& bus, const uint8_t* fb, RefreshMode fallback, bool turnOff) {
@@ -2332,7 +2408,7 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
    if (!fb) return;
    // Match the UC8179 sibling: an explicit Full/Half clean, or a
    // state that can't run the non-flashing transition (first AA page / no valid
-@@ -758,6 +1016,7 @@ void Uc8279X4Driver::runGrayscalePrecondition(EpdBus& bus) {
+@@ -758,6 +1081,7 @@ void Uc8279X4Driver::runGrayscalePrecondition(EpdBus& bus) {
  }
  
  void Uc8279X4Driver::cleanupGrayscaleBuffers(EpdBus& bus, const uint8_t* bw) {
@@ -2341,7 +2417,7 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf
    _grayBaseValid = false;
    _absoluteGrayPlanes = false;
 diff --git a/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.h b/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.h
-index 2ab3b992e9af24040c78a73d41136dd1ae66be53..b0d46d4e764958fb0dd2791c5374507b12f93a6f 100644
+index 2ab3b992e9af24040c78a73d41136dd1ae66be53..b5905e16d7d836d3b25235372869bd507af4f884 100644
 --- a/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.h
 +++ b/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.h
 @@ -76,6 +76,15 @@ class Uc8279X4Driver : public PanelDriver {
@@ -2360,7 +2436,21 @@ index 2ab3b992e9af24040c78a73d41136dd1ae66be53..b0d46d4e764958fb0dd2791c5374507b
  
    void requestResync(uint8_t settlePasses) override;
    void skipInitialResync() override;
-@@ -129,6 +138,11 @@ class Uc8279X4Driver : public PanelDriver {
+@@ -119,6 +128,13 @@ class Uc8279X4Driver : public PanelDriver {
+   // sub-variants), then 0xFF padding to the addressed gate count. `invert`
+   // bitwise-inverts the image rows (AA planes only, per the vendor reference).
+   void streamPlane(EpdBus& bus, uint8_t ramCmd, const uint8_t* fb, bool invert = false);
++#if defined(FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM) && FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM
++  // Diagnostic-only partial SRAM upload. PTL is already active; write exactly
++  // the byte-aligned region from the framebuffer without an intermediate copy.
++  void streamWindowPlane(EpdBus& bus, uint8_t ramCmd, const uint8_t* fb, uint16_t x, uint16_t y, uint16_t w,
++                         uint16_t h);
++#endif
++  void enterPartialWindow(EpdBus& bus, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+   // Stream (lhs XOR rhs) into a RAM plane with the same geometry/mirroring as
+   // streamPlane (used to build absolute grayscale plane1 = plane0 ^ maskMsb).
+   void streamPlaneXor(EpdBus& bus, uint8_t ramCmd, const uint8_t* lhs, const uint8_t* rhs, bool invert = false);
+@@ -129,6 +145,11 @@ class Uc8279X4Driver : public PanelDriver {
    // GC flash. Ported from the UC8179 sibling; the base is restored to DTM1 after.
    void transitionGrayscaleBase(EpdBus& bus, const uint8_t* fb, bool turnOff);
    void runGrayscalePrecondition(EpdBus& bus);
@@ -2372,10 +2462,14 @@ index 2ab3b992e9af24040c78a73d41136dd1ae66be53..b0d46d4e764958fb0dd2791c5374507b
  
    const Uc8279X4Config& _cfg;
  
-@@ -168,6 +182,15 @@ class Uc8279X4Driver : public PanelDriver {
+@@ -168,6 +189,19 @@ class Uc8279X4Driver : public PanelDriver {
    bool _pendingRefresh = false;
    bool _pendingTurnOff = false;
    bool _pendingPartial = false;
++#if defined(FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM) && FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM
++  // Remains true after a checked wait failure so full recovery can leave PTIN.
++  bool _pendingWindowRam = false;
++#endif
 +  bool _checkedRecoveryRequired = false;
 +  bool _checkedOperationActive = false;
 +  bool _checkedWindowActive = false;
@@ -2631,10 +2725,10 @@ index 0eaefd512122247bc447891a8c82ab8e29e27010..7fb6255e940142c4d208907061030b1b
 -}
 +}  // namespace freeink
 diff --git a/libs/display/FreeInkDisplay/test/host/run_pro.py b/libs/display/FreeInkDisplay/test/host/run_pro.py
-index 3cce3ca2f2db04acc138ebd2cd4004fd65358310..3beb9e11d0f383e5c84213992e31d16911f97687 100644
+index 3cce3ca2f2db04acc138ebd2cd4004fd65358310..d146d89251007b166b354000163683daed7e358f 100644
 --- a/libs/display/FreeInkDisplay/test/host/run_pro.py
 +++ b/libs/display/FreeInkDisplay/test/host/run_pro.py
-@@ -19,6 +19,7 @@ with tempfile.TemporaryDirectory(prefix="freeink-pro-test-") as directory:
+@@ -19,21 +19,25 @@ with tempfile.TemporaryDirectory(prefix="freeink-pro-test-") as directory:
      shutil.copy2(LIB / "src/driver/PanelDriver.h", root / "src/driver/PanelDriver.h")
      shutil.copy2(LIB / "src/FreeInkDisplay.cpp", root / "src/FreeInkDisplay.cpp")
      shutil.copy2(LIB / "include/FreeInkDisplay.h", root / "include/FreeInkDisplay.h")
@@ -2642,6 +2736,36 @@ index 3cce3ca2f2db04acc138ebd2cd4004fd65358310..3beb9e11d0f383e5c84213992e31d169
      shutil.copy2(LIB / "include/GrayscaleCapabilities.h", root / "include/GrayscaleCapabilities.h")
      for name in ("Ssd1677Luts.h", "Uc8279X3Luts.h"):
          shutil.copy2(LIB / f"src/lut/{name}", root / f"src/lut/{name}")
+     for name in ("Arduino.h", "BoardConfig.h", "SPI.h", "esp_heap_caps.h"):
+         shutil.copy2(HERE / "pro_stubs" / name, root / name)
+     shutil.copy2(HERE / "pro_stubs/EpdBus.h", root / "src/bus/EpdBus.h")
+-    for single in (False, True):
+-        exe = root / ("single" if single else "dual")
+-        command = [os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra",
+-                   "-Wno-unused-parameter", "-Wno-unused-function", "-DBOARD_HAS_PSRAM=1",
+-                   "-DARDUINO=1", "-I"+str(root), "-I"+str(root / "include")]
+-        if single:
+-            command += ["-DEINK_DISPLAY_SINGLE_BUFFER_MODE=1"]
+-        command += [str(HERE / "test_pro.cpp"), str(root / "src/FreeInkDisplay.cpp")]
+-        command += [str(root / f"src/driver/{name}Driver.cpp") for name in drivers]
+-        subprocess.run(command + ["-o", str(exe)], check=True)
+-        subprocess.run([str(exe)], check=True)
+-        subprocess.run([str(exe), "sticky"], check=True)
++    for window_ram in (False, True):
++        for single in (False, True):
++            exe = root / f"{'single' if single else 'dual'}-{'ram' if window_ram else 'full'}"
++            command = [os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra",
++                       "-Wno-unused-parameter", "-Wno-unused-function", "-DBOARD_HAS_PSRAM=1",
++                       "-DARDUINO=1", "-I"+str(root), "-I"+str(root / "include")]
++            if single:
++                command += ["-DEINK_DISPLAY_SINGLE_BUFFER_MODE=1"]
++            if window_ram:
++                command += ["-DFREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM=1"]
++            command += [str(HERE / "test_pro.cpp"), str(root / "src/FreeInkDisplay.cpp")]
++            command += [str(root / f"src/driver/{name}Driver.cpp") for name in drivers]
++            subprocess.run(command + ["-o", str(exe)], check=True)
++            subprocess.run([str(exe)], check=True)
++            subprocess.run([str(exe), "sticky"], check=True)
 diff --git a/libs/display/FreeInkDisplay/test/host/run_uc8253_power.py b/libs/display/FreeInkDisplay/test/host/run_uc8253_power.py
 index bbc208c9f86cde44d1c54d7d3664e7eab45f6273..2487ff998465cb12b3d788297332ff05078f00c1 100644
 --- a/libs/display/FreeInkDisplay/test/host/run_uc8253_power.py
@@ -3013,7 +3137,7 @@ index 7427b650bfd5891b9e060d28d0fbaee2a2d6ce66..da63723cad038f938ab449c267294a08
    void data(uint8_t) {}
    void data(const uint8_t* p, size_t n) {
 diff --git a/libs/display/FreeInkDisplay/test/host/test_pro.cpp b/libs/display/FreeInkDisplay/test/host/test_pro.cpp
-index feb0dd146b964101d58a0ea21cb24f9aa9e1936a..ef0ec2e7082d626d417453f6b09befc6b2bef6f6 100644
+index feb0dd146b964101d58a0ea21cb24f9aa9e1936a..3172aa1371390d0dc026547a799a0a081e274589 100644
 --- a/libs/display/FreeInkDisplay/test/host/test_pro.cpp
 +++ b/libs/display/FreeInkDisplay/test/host/test_pro.cpp
 @@ -22,6 +22,12 @@ static uint8_t lastRegister(const EpdBus& bus, uint8_t command) {
@@ -3029,7 +3153,7 @@ index feb0dd146b964101d58a0ea21cb24f9aa9e1936a..ef0ec2e7082d626d417453f6b09befc6
  static Bytes frame(unsigned seed) {
    Bytes b(48000);
    for (size_t i=0; i<b.size(); ++i) b[i]=uint8_t((i*37 + i/100*11 + seed) ^ (i>>8));
-@@ -99,6 +105,181 @@ static void testSsd() {
+@@ -99,6 +105,207 @@ static void testSsd() {
    assert(lastRegister(bus,0x22)==0xcf && !d._isScreenOn);
  }
  
@@ -3143,13 +3267,35 @@ index feb0dd146b964101d58a0ea21cb24f9aa9e1936a..ef0ec2e7082d626d417453f6b09befc6
 +    const size_t refresh = firstWrite(bus, 0x12);
 +    const size_t partialOut = firstWrite(bus, 0x92);
 +    const size_t oldPlane = firstWrite(bus, 0x10);
++#if defined(FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM) && FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM
++    assert(partialIn < ptl && ptl < newPlane && newPlane < refresh && refresh < oldPlane && oldPlane < partialOut);
++    const Bytes expectedWindow = {fb[10 * 100 + 2], fb[10 * 100 + 3],
++                                  fb[11 * 100 + 2], fb[11 * 100 + 3]};
++    assert(bus.writes[newPlane].bytes == expectedWindow);
++    assert(bus.writes[oldPlane].bytes == expectedWindow);
++#else
 +    assert(newPlane < partialIn && partialIn < ptl && ptl < refresh && refresh < partialOut && partialOut < oldPlane);
 +    assert(bus.writes[newPlane].bytes.size() == 60000 && bus.writes[oldPlane].bytes.size() == 60000);
++#endif
 +    const Bytes expectedPtl = {0x00, 0x10, 0x00, 0x1F, 0x00, 0x82, 0x00, 0x83, 0x01};
 +    assert(bus.writes[ptl].bytes == expectedPtl);
 +    const auto trace = driver.lastDisplayUpdateTrace();
 +    assert(trace.phase == DisplayTracePhase::Window && trace.stage == DisplayTraceStage::Complete);
++#if defined(FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM) && FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM
++    assert(trace.payloadBytes == 8 && trace.baselineAfter == WindowBaselineState::Valid);
++    const auto nextFrame = frame(72);
++    bus.clear();
++    const auto nextWindow = driver.displayWindowChecked(bus, nextFrame.data(), nullptr, 24, 12, 24, 3, false);
++    assert(nextWindow.succeeded() && nextWindow.actualKind == DisplayUpdateKind::Window);
++    const Bytes expectedNext = {nextFrame[12 * 100 + 3], nextFrame[12 * 100 + 4], nextFrame[12 * 100 + 5],
++                                nextFrame[13 * 100 + 3], nextFrame[13 * 100 + 4], nextFrame[13 * 100 + 5],
++                                nextFrame[14 * 100 + 3], nextFrame[14 * 100 + 4], nextFrame[14 * 100 + 5]};
++    assert(bus.writes[firstWrite(bus, 0x13)].bytes == expectedNext);
++    assert(bus.writes[firstWrite(bus, 0x10)].bytes == expectedNext);
++    assert(driver.lastDisplayUpdateTrace().payloadBytes == 18);
++#else
 +    assert(trace.payloadBytes == 120000 && trace.baselineAfter == WindowBaselineState::Valid);
++#endif
 +
 +    bus.busy = true;
 +    bus.clear();
@@ -3199,6 +3345,10 @@ index feb0dd146b964101d58a0ea21cb24f9aa9e1936a..ef0ec2e7082d626d417453f6b09befc6
 +    bus.clear();
 +    const auto stuckRecovered = driver.displayChecked(bus, fb.data(), nullptr, RefreshMode::Fast, false);
 +    assert(stuckRecovered.succeeded());
++#if defined(FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM) && FREEINK_UC8279X4_EXPERIMENT_WINDOW_RAM
++    assert(firstWrite(bus, 0x92) < firstWrite(bus, 0x13));
++    assert(bus.writes[firstWrite(bus, 0x13)].bytes.size() == 60000);
++#endif
 +
 +    bus.clear();
 +    bus.checkedWaits.push_back(BusyWaitStatus::TimedOut);
@@ -3211,7 +3361,7 @@ index feb0dd146b964101d58a0ea21cb24f9aa9e1936a..ef0ec2e7082d626d417453f6b09befc6
  template<class Driver>
  static void testAsyncFrame() {
    Driver driver;
-@@ -152,6 +333,58 @@ class BwOnlyDriver : public PanelDriver {
+@@ -152,6 +359,58 @@ class BwOnlyDriver : public PanelDriver {
    void display(EpdBus&, const uint8_t*, const uint8_t*, RefreshMode, bool) override {}
  };
  
@@ -3270,7 +3420,7 @@ index feb0dd146b964101d58a0ea21cb24f9aa9e1936a..ef0ec2e7082d626d417453f6b09befc6
  class CombinedGrayDriver : public BwOnlyDriver {
   public:
    GrayscaleCapabilities grayscaleCapabilities(GrayscaleMode mode = GrayscaleMode::Overlay) const override {
-@@ -170,6 +403,7 @@ static void testCapabilities() {
+@@ -170,6 +429,7 @@ static void testCapabilities() {
  
    Ssd1677Driver ssd;
    display._driver = &ssd;
@@ -3278,7 +3428,7 @@ index feb0dd146b964101d58a0ea21cb24f9aa9e1936a..ef0ec2e7082d626d417453f6b09befc6
    auto caps = display.grayscaleCapabilities();
    assert(caps.supported() && caps.encoding == GrayscaleEncoding::OverlayMasks);
    assert(caps.stripUploads && caps.asyncBase && !caps.stagingWhileBusy);
-@@ -198,6 +432,10 @@ static void testCapabilities() {
+@@ -198,6 +458,10 @@ static void testCapabilities() {
  
    Uc8179Driver uc8179;
    Uc8279X4Driver uc8279;
@@ -3289,7 +3439,7 @@ index feb0dd146b964101d58a0ea21cb24f9aa9e1936a..ef0ec2e7082d626d417453f6b09befc6
    for (PanelDriver* driver : {static_cast<PanelDriver*>(&uc8179), static_cast<PanelDriver*>(&uc8279)}) {
      display._driver = driver;
      caps = display.grayscaleCapabilities();
-@@ -433,9 +671,11 @@ int main(int argc, char**) {
+@@ -433,9 +697,11 @@ int main(int argc, char**) {
    }
    testAbsolutePipeline();
    testCapabilities();

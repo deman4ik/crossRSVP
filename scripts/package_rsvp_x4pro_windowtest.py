@@ -1,4 +1,4 @@
-"""Package the opt-in X4 Pro UC8279 20 MHz SPI diagnostic."""
+"""Package either opt-in X4 Pro UC8279 screen-speed diagnostic."""
 
 import hashlib
 import re
@@ -34,15 +34,23 @@ def write_deterministic_archive(archive: Path, files: Sequence[Path]) -> None:
 
 def package_firmware(source, target, env):
     del source, target
+    profile = env.subst("$PIOENV")
+    profiles = {
+        "rsvp_x4pro_window_test": ("spi20test", "docs/rsvp-x4pro-windowtest.md"),
+        "rsvp_x4pro_ram_test": ("ramtest", "docs/rsvp-x4pro-ramtest.md"),
+    }
+    if profile not in profiles:
+        raise RuntimeError(f"Unexpected X4 Pro test profile: {profile}")
+    version_label, instructions = profiles[profile]
     version = None
     for define in env.get("CPPDEFINES", []):
         if isinstance(define, (tuple, list)) and len(define) == 2 and define[0] == "CROSSPOINT_VERSION":
             value = str(define[1]).replace(chr(92), "").replace('"', "")
-            match = re.fullmatch(r"crossRSVP-v(\d+\.\d+\.\d+-spi20test\.\d+)-x4pro", value)
+            match = re.fullmatch(rf"crossRSVP-v(\d+\.\d+\.\d+-{version_label}\.\d+)-x4pro", value)
             if match:
                 version = match.group(1)
-    if env.subst("$PIOENV") != "rsvp_x4pro_window_test" or version is None:
-        raise RuntimeError("Expected the X4 Pro SPI 20 MHz test profile and embedded spi20test version")
+    if version is None:
+        raise RuntimeError(f"Expected an embedded {version_label} version for {profile}")
 
     project = Path(env.subst("$PROJECT_DIR"))
     output = project / "artifacts" / f"crossrsvp-x4pro-v{version}"
@@ -52,7 +60,7 @@ def package_firmware(source, target, env):
     fixture = output / "rsvp-window-test.epub"
     checksums = output / "SHA256SUMS"
     shutil.copy2(Path(env.subst("$BUILD_DIR")) / "firmware.bin", image)
-    shutil.copy2(project / "docs/rsvp-x4pro-windowtest.md", readme)
+    shutil.copy2(project / instructions, readme)
     subprocess.run(
         [
             sys.executable,
@@ -72,7 +80,7 @@ def package_firmware(source, target, env):
     )
     archive = output.parent / f"{output.name}.zip"
     write_deterministic_archive(archive, [*payload, checksums])
-    print(f"Packaged X4 Pro RSVP SPI 20 MHz test: {image}")
+    print(f"Packaged X4 Pro RSVP {version_label} test: {image}")
     print(f"Firmware SHA-256: {file_digest(image)}")
     print(f"Archive SHA-256: {file_digest(archive)}")
 
