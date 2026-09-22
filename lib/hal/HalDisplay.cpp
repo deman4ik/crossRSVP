@@ -156,6 +156,18 @@ void HalDisplay::setExperimentalWindowUpdates(bool enabled) {
   windowGateFallback = DisplayUpdateFallback::ExperimentalDisabled;
 #if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
   const ControllerDetection detection = controllerDetection();
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC_X4PRO) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC_X4PRO
+  if (enabled && detection.isX3) {
+    windowGateFallback = DisplayUpdateFallback::UnsupportedModel;
+  } else if (enabled && !einkDisplay.supportsExperimentalWindowUpdates()) {
+    // X4 Pro batches can use SSD1677, UC8279, or UC8179. The latter does not
+    // advertise the checked-window contract and remains a full-frame control.
+    windowGateFallback = DisplayUpdateFallback::UnsupportedDriver;
+  } else if (enabled) {
+    eligible = true;
+    windowGateFallback = DisplayUpdateFallback::None;
+  }
+#else
   if (enabled && !detection.isX3) {
     windowGateFallback = DisplayUpdateFallback::UnsupportedModel;
   } else if (enabled && detection.controller != Controller::UC8253) {
@@ -168,6 +180,7 @@ void HalDisplay::setExperimentalWindowUpdates(bool enabled) {
     eligible = true;
     windowGateFallback = DisplayUpdateFallback::None;
   }
+#endif
 #else
   const ControllerDetection detection = controllerDetection();
   if (enabled && detection.isX3 && detection.confidence == ControllerConfidence::Inconclusive) {

@@ -374,6 +374,14 @@ bool RsvpReaderActivity::loadBook() {
   presentedRegionValid = false;
 #endif
   if (mappedInput.hasTouch()) {
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+    windowDiagnosticUi = makeUniqueNoThrow<RsvpWindowDiagnosticUi>(renderer);
+    if (!windowDiagnosticUi) {
+      LOG_ERR("RSVP", "OOM: window diagnostic touch UI");
+      return enterFatalFallback(rsvp::Error::SourceOpen);
+    }
+    windowDiagnosticUi->begin();
+#else
     controlPanel = makeUniqueNoThrow<RsvpControlPanelUi>(renderer);
     if (!controlPanel) {
       LOG_ERR("RSVP", "OOM: touch control panel");
@@ -382,6 +390,7 @@ bool RsvpReaderActivity::loadBook() {
       controlPanel->begin();
       panelVisible = true;
     }
+#endif
   }
   LOG_INF("RSVP", "short-word-grouping=%s", groupingEnabled ? "on" : "off");
 #ifdef CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS
@@ -608,6 +617,15 @@ void RsvpReaderActivity::updateWindowDiagnostic(const uint32_t nowMs) {
     finishWindowDiagnostic(false, nowMs);
     return;
   }
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC_WIDE_ONLY) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC_WIDE_ONLY
+  if (windowBenchmark.currentPhase() == rsvp::WindowBenchmarkPhase::TightProbe) {
+    // The SPI experiment changes one variable and compares the full and broad
+    // line branches only. Do not expose the tight candidate that already left
+    // visible remnants on the tested X4 Pro.
+    finishWindowDiagnostic(false, nowMs);
+    return;
+  }
+#endif
   switch (windowBenchmark.currentPhase()) {
     case rsvp::WindowBenchmarkPhase::FullWarmup:
       windowDiagnosticPhase = rsvp::WindowDiagnosticPhase::FullWarmup;
@@ -846,6 +864,27 @@ void RsvpReaderActivity::loop() {
     return;
   }
 
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  if (windowDiagnosticUi && windowDiagnosticUi->route(mappedInput)) {
+    const bool canStartWindowDiagnostic = windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Ready ||
+                                          windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Complete ||
+                                          windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Aborted ||
+                                          windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Error;
+    if (windowFailureAwaitingUser && checkedDisplayFailure.load(std::memory_order_acquire)) {
+      windowFailureConfirmArmed = false;
+      windowFailureRecoveryRequested = true;
+    } else if (windowProbeAwaitingConfirm) {
+      windowProbeConfirmArmed = false;
+      windowProbeAdvanceRequested = true;
+    } else if (windowBenchmark.running() || windowProbePresentationPending) {
+      windowProbeConfirmArmed = false;
+      windowAbortRequested = true;
+    } else if (canStartWindowDiagnostic && !checkedDisplayFailure.load(std::memory_order_acquire)) {
+      windowStartRequested = true;
+    }
+    return;
+  }
+#endif
 #if defined(SIMULATOR)
   int tappedX = 0;
   int tappedY = 0;
@@ -1538,15 +1577,21 @@ void RsvpReaderActivity::drawStatus() const {
   const bool windowProbePhase = windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::FullSizePtl ||
                                 windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::LineCandidate ||
                                 windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::TightProbe;
-  const char* hint = windowFailureAwaitingUser ? tr(STR_RSVP_WINDOW_FAILURE_CONFIRM)
-                     : (windowProbePhase || windowProbeAwaitingConfirm || windowProbePresentationPending)
-                         ? tr(STR_RSVP_WINDOW_PROBE_CONFIRM)
-                     : windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Ready ? tr(STR_RSVP_WINDOW_START_HINT)
-                     : windowReportFailed                                          ? tr(STR_RSVP_WINDOW_CSV_ERROR)
-                     : windowReportSaved                                           ? tr(STR_RSVP_WINDOW_CSV_SAVED)
-                                                                                   : tr(STR_RSVP_WINDOW_PROBE_RUNNING);
-  renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight() - renderer.getLineHeight(SMALL_FONT_ID) - 12,
-                            hint);
+  const bool hasTouchDiagnosticUi = windowDiagnosticUi != nullptr;
+  const char* hint =
+      windowFailureAwaitingUser
+          ? (hasTouchDiagnosticUi ? tr(STR_RSVP_WINDOW_TOUCH_FAILURE_HINT) : tr(STR_RSVP_WINDOW_FAILURE_CONFIRM))
+      : (windowProbePhase || windowProbeAwaitingConfirm || windowProbePresentationPending)
+          ? (hasTouchDiagnosticUi ? tr(STR_RSVP_WINDOW_TOUCH_PROBE_HINT) : tr(STR_RSVP_WINDOW_PROBE_CONFIRM))
+      : windowDiagnosticPhase == rsvp::WindowDiagnosticPhase::Ready
+          ? (hasTouchDiagnosticUi ? tr(STR_RSVP_WINDOW_TOUCH_START_HINT) : tr(STR_RSVP_WINDOW_START_HINT))
+      : windowReportFailed ? tr(STR_RSVP_WINDOW_CSV_ERROR)
+      : windowReportSaved
+          ? (hasTouchDiagnosticUi ? tr(STR_RSVP_WINDOW_TOUCH_SAVED_HINT) : tr(STR_RSVP_WINDOW_CSV_SAVED))
+          : (hasTouchDiagnosticUi ? tr(STR_RSVP_WINDOW_TOUCH_RUNNING_HINT) : tr(STR_RSVP_WINDOW_PROBE_RUNNING));
+  const int touchUiHeight = windowDiagnosticUi ? windowDiagnosticUi->reservedHeight() : 0;
+  renderer.drawCenteredText(
+      SMALL_FONT_ID, renderer.getScreenHeight() - touchUiHeight - renderer.getLineHeight(SMALL_FONT_ID) - 12, hint);
 #else
 #ifdef CROSSRSVP_MANUAL_SPEED_DIAGNOSTICS
   char status[128];
@@ -1616,6 +1661,19 @@ void RsvpReaderActivity::renderBook() {
     wordDoesNotFitPending.store(true);
   }
   drawStatus();
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  if (windowDiagnosticUi) {
+    const char* actionLabel = tr(STR_RSVP_WINDOW_TOUCH_START);
+    if (windowFailureAwaitingUser) {
+      actionLabel = tr(STR_RSVP_WINDOW_TOUCH_RECOVER);
+    } else if (windowProbeAwaitingConfirm || windowProbePresentationPending) {
+      actionLabel = tr(STR_RSVP_WINDOW_TOUCH_CONTINUE);
+    } else if (windowBenchmark.running()) {
+      actionLabel = tr(STR_RSVP_WINDOW_TOUCH_STOP);
+    }
+    windowDiagnosticUi->render(actionLabel);
+  }
+#endif
   if (controlPanel && panelVisible) {
     const bool canPlay = currentDecision.state == rsvp::State::Paused;
     const bool canStep = canPlay || (currentDecision.state == rsvp::State::Boundary &&

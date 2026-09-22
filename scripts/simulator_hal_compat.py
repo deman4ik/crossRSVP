@@ -371,6 +371,16 @@ if "HalDisplay::DisplayUpdateResult HalDisplay::displayBufferChecked" not in sou
         "  windowGateFallback = DisplayUpdateFallback::ExperimentalDisabled;\n"
         "#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC\n"
         "  const ControllerDetection detection = controllerDetection();\n"
+        "#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC_X4PRO) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC_X4PRO\n"
+        "  const char *controllerOverride = std::getenv(\"CROSSPOINT_SIM_DISPLAY_CONTROLLER\");\n"
+        "  if (enabled && detection.isX3) {\n"
+        "    windowGateFallback = DisplayUpdateFallback::UnsupportedModel;\n"
+        "  } else if (enabled && controllerOverride && std::strcmp(controllerOverride, \"uc8179\") == 0) {\n"
+        "    windowGateFallback = DisplayUpdateFallback::UnsupportedDriver;\n"
+        "  } else if (enabled) {\n"
+        "    windowGateFallback = DisplayUpdateFallback::None;\n"
+        "  }\n"
+        "#else\n"
         "  if (enabled && !detection.isX3) {\n"
         "    windowGateFallback = DisplayUpdateFallback::UnsupportedModel;\n"
         "  } else if (enabled && detection.controller != Controller::UC8253) {\n"
@@ -380,6 +390,7 @@ if "HalDisplay::DisplayUpdateResult HalDisplay::displayBufferChecked" not in sou
         "  } else if (enabled) {\n"
         "    windowGateFallback = DisplayUpdateFallback::None;\n"
         "  }\n"
+        "#endif\n"
         "#else\n"
         "  const char *controllerOverride = std::getenv(\"CROSSPOINT_SIM_DISPLAY_CONTROLLER\");\n"
         "  if (enabled && controllerOverride && std::strcmp(controllerOverride, \"uc8179\") == 0) {\n"
@@ -401,6 +412,49 @@ if "HalDisplay::DisplayUpdateResult HalDisplay::displayBufferChecked" not in sou
         + checked_source_anchor,
         1,
     )
+
+# Migrate cached simulator dependencies whose diagnostic gate only models X3.
+legacy_diagnostic_gate = (
+    "#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC\n"
+    "  const ControllerDetection detection = controllerDetection();\n"
+    "  if (enabled && !detection.isX3) {\n"
+    "    windowGateFallback = DisplayUpdateFallback::UnsupportedModel;\n"
+    "  } else if (enabled && detection.controller != Controller::UC8253) {\n"
+    "    windowGateFallback = DisplayUpdateFallback::UnsupportedController;\n"
+    "  } else if (enabled && detection.confidence == ControllerConfidence::Inconclusive) {\n"
+    "    windowGateFallback = DisplayUpdateFallback::InconclusiveController;\n"
+    "  } else if (enabled) {\n"
+    "    windowGateFallback = DisplayUpdateFallback::None;\n"
+    "  }\n"
+    "#else\n"
+)
+if legacy_diagnostic_gate in source_text:
+    x4pro_diagnostic_gate = (
+        "#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC\n"
+        "  const ControllerDetection detection = controllerDetection();\n"
+        "#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC_X4PRO) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC_X4PRO\n"
+        "  const char *controllerOverride = std::getenv(\"CROSSPOINT_SIM_DISPLAY_CONTROLLER\");\n"
+        "  if (enabled && detection.isX3) {\n"
+        "    windowGateFallback = DisplayUpdateFallback::UnsupportedModel;\n"
+        "  } else if (enabled && controllerOverride && std::strcmp(controllerOverride, \"uc8179\") == 0) {\n"
+        "    windowGateFallback = DisplayUpdateFallback::UnsupportedDriver;\n"
+        "  } else if (enabled) {\n"
+        "    windowGateFallback = DisplayUpdateFallback::None;\n"
+        "  }\n"
+        "#else\n"
+        "  if (enabled && !detection.isX3) {\n"
+        "    windowGateFallback = DisplayUpdateFallback::UnsupportedModel;\n"
+        "  } else if (enabled && detection.controller != Controller::UC8253) {\n"
+        "    windowGateFallback = DisplayUpdateFallback::UnsupportedController;\n"
+        "  } else if (enabled && detection.confidence == ControllerConfidence::Inconclusive) {\n"
+        "    windowGateFallback = DisplayUpdateFallback::InconclusiveController;\n"
+        "  } else if (enabled) {\n"
+        "    windowGateFallback = DisplayUpdateFallback::None;\n"
+        "  }\n"
+        "#endif\n"
+        "#else\n"
+    )
+    source_text = source_text.replace(legacy_diagnostic_gate, x4pro_diagnostic_gate, 1)
 
 # Migrate simulator dependency copies created before the display trace was
 # added. PlatformIO keeps libdeps between runs, so the insertion-only block

@@ -23,6 +23,9 @@
 
 #include "ReaderActivity.h"
 #include "RsvpControlPanelUi.h"
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+#include "RsvpWindowDiagnosticUi.h"
+#endif
 
 class RsvpReaderActivity final : public ReaderActivity {
  public:
@@ -162,6 +165,9 @@ class RsvpReaderActivity final : public ReaderActivity {
   int companionFontId = 0;
   int smallerSdFontId = 0;
   std::unique_ptr<RsvpControlPanelUi> controlPanel;
+#if defined(CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC) && CROSSPOINT_RSVP_WINDOW_DIAGNOSTIC
+  std::unique_ptr<RsvpWindowDiagnosticUi> windowDiagnosticUi;
+#endif
   bool panelVisible = false;
   bool swallowTouchRelease = false;
   bool pauseTouchPending = false;

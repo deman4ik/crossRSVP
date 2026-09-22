@@ -1894,10 +1894,10 @@ index 966966c409e62bc74a9f6ff7d58026c31e3dd9c2..82e4e1a4c40bc2a0b3086f9cfcff518f
  
  PanelDriver& uc8253X3Driver();
 diff --git a/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.cpp b/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.cpp
-index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..75084fa36b744e2dcd0f60a698ed7c85071da0b5 100644
+index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..6c0cd349b4897191d225d867740bbdaf6917ba59 100644
 --- a/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.cpp
 +++ b/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.cpp
-@@ -242,6 +242,39 @@ Uc8279X4Driver::Uc8279X4Driver(const Uc8279X4Config& cfg)
+@@ -242,9 +242,48 @@ Uc8279X4Driver::Uc8279X4Driver(const Uc8279X4Config& cfg)
        _tresH(cfg.tresHeight),
        _bufferSize(static_cast<uint32_t>(BoardConfig::ACTIVE.displayWidth / 8) * BoardConfig::ACTIVE.displayHeight) {}
  
@@ -1936,7 +1936,16 @@ index e9d80d3fe74cf80274d079b5f18e86fbf26d6e9e..75084fa36b744e2dcd0f60a698ed7c85
 +
  uint32_t Uc8279X4Driver::spiHz() const {
    // UC8279 serial write timing is rated to 20 MHz, same as the rest of the family.
++#if defined(FREEINK_UC8279X4_EXPERIMENT_SPI_HZ)
++  static_assert(FREEINK_UC8279X4_EXPERIMENT_SPI_HZ > 0 && FREEINK_UC8279X4_EXPERIMENT_SPI_HZ <= 20000000,
++                "UC8279 X4 experimental SPI frequency must stay within the controller rating");
++  return FREEINK_UC8279X4_EXPERIMENT_SPI_HZ;
++#else
    return BoardConfig::ACTIVE.displaySpiHz != 0 ? BoardConfig::ACTIVE.displaySpiHz : 16000000;
++#endif
+ }
+ 
+ PanelGeometry Uc8279X4Driver::geometry() const { return {_w, _h, _wb, _bufferSize}; }
 @@ -296,9 +329,14 @@ void Uc8279X4Driver::begin(EpdBus& bus) {
    }
    _grayBaseValid = false;

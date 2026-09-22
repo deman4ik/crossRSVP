@@ -50,6 +50,8 @@ TIGHT_MEASUREMENT_A_MS = TIGHT_MEASUREMENT_SCREENSHOTS_MS[0]
 TIGHT_MEASUREMENT_B_MS = TIGHT_MEASUREMENT_SCREENSHOTS_MS[-1]
 TIGHT_RESULTS_MS = 255000
 TIGHT_QUIT_MS = 260000
+WIDE_ONLY_RESULTS_MS = 150000
+WIDE_ONLY_QUIT_MS = 155000
 SIMULATOR_STARTUP_ALLOWANCE_MS = 3000
 TIGHT_SCREENSHOT_TRACE_MARGIN_MS = 100
 DEFERRED_SCREENSHOT_MS = 16000
@@ -592,6 +594,39 @@ def _assert_probe_confirmations(rows: list[dict[str, str]]) -> None:
             raise RuntimeError("complete report did not retain all visual probe confirmations")
 
 
+def _assert_wide_only_report(rows: list[dict[str, str]]) -> None:
+    """Validate a complete full-screen/wide-line run with no tight-word phase."""
+    if len(rows) != 3 or [row.get("variant") for row in rows] != [
+        "full", "window", "tight_window"
+    ]:
+        raise RuntimeError("wide-only report variants must be full, window, tight_window")
+    if any(row.get("diagnostic_status") != "complete" for row in rows):
+        raise RuntimeError("wide-only diagnostic did not complete")
+    if any(
+        row.get("full_probe_confirmed") != "1" or
+        row.get("line_probe_confirmed") != "1" or
+        row.get("tight_probe_confirmed") != "0"
+        for row in rows
+    ):
+        raise RuntimeError("wide-only report has inconsistent probe confirmations")
+    for row in rows[:2]:
+        if int(row["elapsed_ms"]) < 60000 or int(row["frame_count"]) == 0:
+            raise RuntimeError("wide-only measured branches must run for at least 60 seconds")
+        if int(row["failure_count"]) != 0 or int(row["fallback_count"]) != 0:
+            raise RuntimeError("wide-only measured branch reported a failure or fallback")
+    if int(rows[1]["actual_window_count"]) == 0:
+        raise RuntimeError("wide-only line branch did not use window updates")
+    if int(rows[1]["roi_sample_count"]) == 0:
+        raise RuntimeError("wide-only line branch has no ROI samples")
+    zero_fields = (
+        "elapsed_ms", "frame_count", "refresh_count", "actual_window_count",
+        "actual_full_count", "fallback_count", "failure_count", "roi_sample_count",
+        "roi_min_width", "roi_max_width", "roi_min_height", "roi_max_height",
+    )
+    if any(int(rows[2][field]) != 0 for field in zero_fields):
+        raise RuntimeError("wide-only report contains measurements for the skipped tight phase")
+
+
 def _assert_probe_failure(rows: list[dict[str, str]], scenario: str, error: str, error_code: str,
                           phase: str, operation: str, baseline_after: str,
                           full_probe_confirmed: str, line_probe_confirmed: str,
@@ -815,6 +850,8 @@ def main(argv=None) -> int:
                         help="run one complete orientation (default: all four)")
     parser.add_argument("--jobs", type=int, choices=range(1, 5), default=1,
                         help="parallel complete-orientation simulator processes")
+    parser.add_argument("--wide-only", action="store_true",
+                        help="qualify the full-screen and wide-line phases, skipping tight-word refresh")
     args = parser.parse_args(argv)
     program = args.program.resolve()
     if not program.is_file():
@@ -831,6 +868,27 @@ def main(argv=None) -> int:
             def run_orientation(orientation: int) -> None:
                 name = f"complete-orientation-{orientation}"
                 print(f"[simulator] starting {name}", flush=True)
+                if args.wide_only:
+                    report, complete_log = _run(
+                        program, helper, fixture, args.output.resolve(), name, orientation,
+                        f"{START_RSVP};3600:TAP:0.5,0.95;10000:TAP:0.5,0.95;"
+                        f"16000:TAP:0.5,0.95;{WIDE_ONLY_QUIT_MS}:QUIT",
+                        {8500: f"{name}-full-size-ptl.bmp", 14500: f"{name}-line-candidate.bmp",
+                         28000: f"{name}-full-a.bmp", 30000: f"{name}-full-b.bmp",
+                         95000: f"{name}-window-a.bmp", 97000: f"{name}-window-b.bmp",
+                         WIDE_ONLY_RESULTS_MS: f"{name}-results.bmp"},
+                        175, language=args.language,
+                    )
+                    rows = _read_report(report, complete=False,
+                                        expected_orientation=ORIENTATION_NAMES[orientation])
+                    _assert_wide_only_report(rows)
+                    _assert_probe_pair(args.output / f"{name}-full-size-ptl.bmp",
+                                       args.output / f"{name}-line-candidate.bmp")
+                    _assert_window_pair(args.output / f"{name}-window-a.bmp",
+                                        args.output / f"{name}-window-b.bmp", orientation)
+                    _read_roi_trace(complete_log)
+                    print(f"[simulator] passed {name} (wide-only)", flush=True)
+                    return
                 report, complete_log = _run(
                     program, helper, fixture, args.output.resolve(), name, orientation,
                     f"{START_RSVP};{START_DIAGNOSTIC};{FULL_SIZE_PTL_CONFIRM};{LINE_CANDIDATE_CONFIRM};"
