@@ -11,7 +11,18 @@ concurrency:
   group: pages
   cancel-in-progress: false
 jobs:
+  dispatch-release:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Publish the release catalog from master
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run site.yml --ref master --repo "${{ github.repository }}"
   build:
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     permissions:
       contents: read
