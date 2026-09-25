@@ -80,3 +80,31 @@ h2, .section-heading h2 { font-size: clamp(36px, 4.5vw, 60px); }
   .demo-section { padding-block: 72px; }
   footer { padding-block: 40px; }
 }
+
+.unlock {
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  align-items: start;
+  gap: clamp(36px, 6vw, 80px);
+}
+.unlock h2 { font-size: clamp(36px, 4.5vw, 60px); }
+.unlock .section-lede { max-width: 490px; margin: 28px 0 0; font-size: 15px; }
+.unlock-note {
+  border-left: 2px solid var(--orange);
+  padding-left: 16px;
+  max-width: 490px;
+  margin: 26px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.unlock-options { display: grid; gap: 14px; }
+.unlock-card { background: #fff; padding: clamp(22px, 3vw, 30px); }
+.unlock-model { color: var(--orange); font: 500 11px 'DM Mono', monospace; letter-spacing: .1em; }
+.unlock-card h3 { font: 500 23px Newsreader, Georgia, serif; margin: 12px 0; }
+.unlock-card p { color: var(--muted); font-size: 14px; line-height: 1.65; margin: 0 0 22px; }
+.unlock-card .text-link { display: inline-block; }
+@media(max-width: 760px) {
+  .unlock { grid-template-columns: 1fr; }
+}

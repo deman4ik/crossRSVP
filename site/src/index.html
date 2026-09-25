@@ -15,6 +15,7 @@
     <a data-i18n="navWhy" href="#why">Features</a>
     <a data-i18n="navDemo" href="#demo">Try RSVP</a>
     <a data-i18n="navDownloads" href="#downloads">Download</a>
+    <a data-i18n="navUnlock" href="#unlock">Locked device?</a>
     <a data-i18n="navInstall" href="#install">Install</a>
   </nav>
   <button class="language" id="language" type="button" data-i18n-aria="languageLabel" aria-label="Change language">RU <span aria-hidden="true">↗</span></button>
@@ -81,6 +82,28 @@
     <div class="device-grid"><!-- RELEASE_CARDS --></div>
     <a data-i18n="allReleases" class="text-link all-releases" href="https://github.com/deman4ik/crossRSVP/releases">All versions on GitHub ↗</a>
   </section>
+  <section class="section unlock" id="unlock" aria-labelledby="unlock-title">
+    <div class="unlock-intro">
+      <p data-i18n="unlockEyebrow" class="eyebrow">Factory firmware</p>
+      <h2 data-i18n="unlockTitle" id="unlock-title">USB flashing<br><em>not available?</em></h2>
+      <p data-i18n="unlockText" class="section-lede">Some Xteink readers ship with USB flashing disabled. CrossPoint has separate instructions for installing its firmware on these devices. Choose the guide for your model.</p>
+      <p data-i18n="unlockNote" class="unlock-note">CrossPoint's Unlocker officially supports CrossPoint and CrossInk. CrossRSVP is a separate firmware and is not listed as supported there.</p>
+    </div>
+    <div class="unlock-options">
+      <article class="unlock-card">
+        <span class="unlock-model">X3 · X4</span>
+        <h3 data-i18n="unlockSdTitle">Start from the SD card</h3>
+        <p data-i18n="unlockSdText">CrossPoint explains how to install CrossPoint from an SD card on a locked X3 or X4. This does not enable USB flashing.</p>
+        <a data-i18n="unlockSdLink" class="text-link" href="https://crosspointreader.com/unlock">Open CrossPoint's guide ↗</a>
+      </article>
+      <article class="unlock-card">
+        <span class="unlock-model">X4 Pro</span>
+        <h3 data-i18n="unlockOtaTitle">Use the OTA Unlocker</h3>
+        <p data-i18n="unlockOtaText">CrossPoint directs X4 Pro owners to its OTA Unlocker instead of SD-card flashing. Follow its device-specific instructions.</p>
+        <a data-i18n="unlockOtaLink" class="text-link" href="https://crosspointreader.com/unlocker">Open CrossPoint's OTA Unlocker ↗</a>
+      </article>
+    </div>
+  </section>
   <section class="section installation" id="install">
     <div class="section-heading">
       <p data-i18n="installEyebrow" class="eyebrow">Getting started</p>
@@ -94,7 +117,7 @@
       <li><h3 data-i18n="stepRead">Open a book and try RSVP</h3><p data-i18n="stepReadText">Open an EPUB and bring up the reading menu. Choose More → RSVP Reading Mode in the toolbar, or RSVP Reading Mode in the list menu. Reading starts paused.</p></li>
     </ol>
     <div class="install-links">
-      <p data-i18n="firstInstall">Still using the factory firmware? Start with the <a href="https://github.com/crosspoint-reader/crosspoint-reader#install-firmware">CrossPoint installation guide ↗</a>, then follow the steps above.</p>
+      <p data-i18n="firstInstall">Still using the factory firmware? Start with the <a href="https://github.com/crosspoint-reader/crosspoint-reader#install-firmware">CrossPoint installation guide ↗</a>. If USB flashing is unavailable, read the <a href="#unlock">locked-device section</a> first.</p>
       <a data-i18n="installGuide" class="text-link" href="https://github.com/deman4ik/crossRSVP/blob/master/docs/rsvp-release-installation.md">Detailed instructions and how to go back ↗</a>
     </div>
   </section>

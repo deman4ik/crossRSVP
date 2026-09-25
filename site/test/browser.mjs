@@ -40,8 +40,12 @@ try {
   let { context, page } = await open({ locale: 'ru-RU' });
   assert.equal(await page.locator('html').getAttribute('lang'), 'ru');
   assert.match(await text(page, 'h1'), /Читайте/);
+  assert.match(await text(page, '#unlock'), /Прошивка по USB/);
+  assert.equal(await page.locator('#unlock a[href="https://crosspointreader.com/unlock"]').count(), 1);
+  assert.equal(await page.locator('#unlock a[href="https://crosspointreader.com/unlocker"]').count(), 1);
   await page.locator('#language').click();
   assert.match(await text(page, 'h1'), /Read/);
+  assert.match(await text(page, '#unlock'), /USB flashing/);
   assert.match(await text(page, '#downloads'), /No firmware file for this model yet/);
   await page.reload({ waitUntil: 'domcontentloaded' });
   assert.equal(await page.locator('html').getAttribute('lang'), 'en');
@@ -102,7 +106,7 @@ try {
     for (const language of ['ru', 'en']) {
       if (language === 'en') await page.locator('#language').click();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `overflow at ${width} in ${language}`);
-      for (const selector of ['.hero-copy', '.feature-grid', '.demo-intro', '.demo-card', '.device-grid', '.install-steps']) {
+      for (const selector of ['.hero-copy', '.feature-grid', '.demo-intro', '.demo-card', '.device-grid', '.unlock-intro', '.unlock-options', '.install-steps']) {
         const box = await page.locator(selector).boundingBox();
         assert.ok(box.x >= 23 && box.x + box.width <= width - 23, `missing side gutters at ${width}: ${selector}`);
       }
