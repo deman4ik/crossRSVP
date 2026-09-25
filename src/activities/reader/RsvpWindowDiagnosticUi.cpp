@@ -27,6 +27,8 @@ void RsvpWindowDiagnosticUi::render(const char* label) {
 bool RsvpWindowDiagnosticUi::route(const MappedInputManager& input) {
   activated_ = false;
   const auto touch = routeTouch(input);
+  // routeTouch dispatches onAction through the UI callback.
+  // cppcheck-suppress knownConditionTrueFalse
   return touch.routed && touch.snap.touchReleased && activated_;
 }
 

@@ -123,13 +123,19 @@ jobs:
       - name: Cache PlatformIO packages
         uses: actions/cache@v4
         with:
-          path: ~/.platformio
-          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
-          restore-keys: pio-${{ runner.os }}-
+          path: ${{ runner.temp }}/platformio-build
+          key: pio-${{ runner.os }}-core6.1.19-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-core6.1.19-
 
       - name: Build ${{ matrix.env }} firmware
+        env:
+          PLATFORMIO_CORE_DIR: ${{ runner.temp }}/platformio-build
         run: |
           set -euo pipefail
+          # The custom SDK rebuild invokes penv/bin/pio; pin its SCons engine too.
+          mkdir -p "$PLATFORMIO_CORE_DIR"
+          uv venv --clear --python "$(command -v python)" "$PLATFORMIO_CORE_DIR/penv"
+          uv pip install --python "$PLATFORMIO_CORE_DIR/penv/bin/python" 'pioarduino==6.1.19'
           pio run -e ${{ matrix.env }} | tee pio.log
 
       - name: Extract firmware stats

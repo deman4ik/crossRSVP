@@ -8,6 +8,11 @@ name: Validate CrossRSVP Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published CrossRSVP tag to validate
+        required: true
 
 permissions:
   contents: read
@@ -28,12 +33,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event.release.tag_name || inputs.release_tag }}
           submodules: recursive
 
       - name: Validate CrossRSVP release version
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
           python - <<'PY'
           import configparser
@@ -78,12 +83,19 @@ jobs:
             "reedsolo>=1.5.3,<1.8" "esp-idf-size>=2.0.0" "esp-coredump>=1.14.0"
 
       - name: Build CrossRSVP
-        run: pio run -e ${{ matrix.pio_env }} -j1
+        env:
+          PLATFORMIO_CORE_DIR: ${{ runner.temp }}/platformio-build
+        run: |
+          # The C3 custom SDK rebuild invokes penv/bin/pio after the outer build.
+          mkdir -p "$PLATFORMIO_CORE_DIR"
+          uv venv --clear --python "$(command -v python)" "$PLATFORMIO_CORE_DIR/penv"
+          uv pip install --python "$PLATFORMIO_CORE_DIR/penv/bin/python" 'pioarduino==6.1.19'
+          pio run -e ${{ matrix.pio_env }} -j1
 
       - name: Validate packaged firmware
         id: asset
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
           version="${RELEASE_TAG#v}"
           asset="crossrsvp-${{ matrix.device }}-v${version}.bin"
