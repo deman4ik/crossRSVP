@@ -1,16 +1,13 @@
-# CrossRSVP v0.8.0 — X3, X4 and X4 Pro installation and rollback
+# CrossRSVP v0.9.0 — X3, X4 and X4 Pro installation and rollback
 
-This guide applies to the model-labelled images in the CrossRSVP v0.8.0 GitHub
-pre-release. The ordinary X3, X4 and X4 Pro images have completed their local
-build and package checks, but GitHub marks the release **beta / pre-release**
-while physical qualification is pending. Use only the image whose model name
-matches the label on the reader.
+This guide applies to the model-labelled images in the CrossRSVP v0.9.0 GitHub
+release. Use only the image whose model name matches the label on the reader.
 
 | Reader | Image | Controller behavior in RSVP |
 | --- | --- | --- |
-| Xteink X3 | `crossrsvp-x3-v0.8.0.bin` | UC8253 can use the RSVP line update; an inconclusive X3 probe or unsupported active driver uses a full frame |
-| Original Xteink X4 | `crossrsvp-x4-v0.8.0.bin` | SSD1677 and UC8279 line paths are available; an unsupported active driver uses the full frame |
-| Xteink X4 Pro | `crossrsvp-x4pro-v0.8.0.bin` | SSD1677 and UC8279 line paths are available; UC8179 Pro remains on the full-frame fallback |
+| Xteink X3 | `crossrsvp-x3-v0.9.0.bin` | Wide-line update with the established full-buffer controller write; uncertain probes use a full frame |
+| Original Xteink X4 | `crossrsvp-x4-v0.9.0.bin` | Wide-line update with the established full-buffer controller write; unsupported drivers use a full frame |
+| Xteink X4 Pro | `crossrsvp-x4pro-v0.9.0.bin` | UC8279 uses the tested 20 MHz and line-only RAM write; unsupported drivers use a full frame |
 
 The image label selects the board profile. The active driver and the model must
 remain compatible; this is not a reason to install an image built for another
@@ -27,8 +24,8 @@ switching to it. Do not remove power during that operation.
 1. Confirm the exact model and compare the downloaded image's SHA-256 with the
    `SHA256SUMS` entry from the same GitHub release.
 2. Copy the matching image from the release bundle to the SD card:
-   `crossrsvp-x3-v0.8.0.bin`, `crossrsvp-x4-v0.8.0.bin`, or
-   `crossrsvp-x4pro-v0.8.0.bin`. Do not select a neighbouring model's image.
+   `crossrsvp-x3-v0.9.0.bin`, `crossrsvp-x4-v0.9.0.bin`, or
+   `crossrsvp-x4pro-v0.9.0.bin`. Do not select a neighbouring model's image.
 3. On the reader open **Settings → System → SD Card Firmware Update**, select
    the image, wait for validation, and confirm the update.
 4. Leave the reader powered until it reports completion and restarts. The
@@ -37,9 +34,10 @@ switching to it. Do not remove power during that operation.
    [the device audit](rsvp-device-audit.md). RSVP starts from the existing
    reader position and is entered explicitly on a paused screen.
 
-The current build evidence, CI status and physical checks are listed in the
-[v0.8.0 validation report](rsvp-v0.8.0-validation.md). The local image checks
-do not set `hardware_qualified`.
+The X3 full-buffer wide-line path and the X4 Pro line-only RAM path have been
+tested on one device of each model. X4 retains the earlier release path, but
+does not yet have a physical measurement. These checks do not qualify every
+controller variant or orientation.
 
 The X4 Pro's USB MSC transfer mode temporarily owns the SD card. Finish copying
 files, then use the computer's safe-eject/unmount command and wait for the host
@@ -59,7 +57,7 @@ During the first check, compare a short Russian and English passage at the same
 requested pace. Look for readable line edges, contrast, repeated words and
 ghosting. Record the model, controller shown by the diagnostic/status report,
 orientation and image SHA-256 before reporting a problem. Physical evidence for
-one X3 portrait board does not qualify X4, X4 Pro, or the other orientations.
+one board does not qualify other models, controller variants or orientations.
 
 ## Rollback
 
